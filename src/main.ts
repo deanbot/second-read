@@ -18,6 +18,7 @@ import {
   HOOKS,
   type HookName,
   hooksDir,
+  hooksInWorkTree,
   installHooks,
   type Pushed,
   pushRange,
@@ -166,6 +167,13 @@ function runHooks(io: Io, args: string[]): number {
     throw new UsageError(`hooks takes "install" or "uninstall"`);
   }
   const dir = hooksDir(io.cwd, io.env);
+  if (action === "install" && hooksInWorkTree(dir, io.cwd, io.env)) {
+    throw new Error(
+      `${dir} is inside the work tree (core.hooksPath), so the hooks would be files in the repository, ` +
+        `with paths on this machine in them. Nothing was installed. Point core.hooksPath at a folder outside ` +
+        `the work tree, copying in the repository's own hooks if you use them, or unset it, and install again.`,
+    );
+  }
   if (action === "install") mkdirSync(dir, { recursive: true });
   const done = action === "install" ? installHooks(dir, io.command) : uninstallHooks(dir);
   io.out(`second-read: ${dir}\n${done.map((line) => `  ${line}\n`).join("")}`);
@@ -211,6 +219,7 @@ function checkPushed(pushed: Pushed, identity: Identity, rules: Rules): Finding[
 }
 
 function pushedWhere(pushed: Pushed): string {
+  if (pushed.kind === "tag") return `the message of tag ${pushed.commit}`;
   return pushed.kind === "message"
     ? `the message of commit ${pushed.commit}`
     : `the lines commit ${pushed.commit} adds to ${pushed.file}`;

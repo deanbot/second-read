@@ -147,11 +147,28 @@ test("hooks uninstall removes only its own hooks and puts back the one it set as
 
 test("hooks install respects core.hooksPath", () => {
   const dir = repo();
-  git(dir, "config", "core.hooksPath", "custom-hooks");
-  assert.equal(secondRead(dir, ["hooks", "install"]).status, 0);
-  assert.ok(existsSync(join(dir, "custom-hooks", "commit-msg")));
+  const shared = join(fresh("shared-hooks"), "hooks");
+  git(dir, "config", "core.hooksPath", shared);
+  mkdirSync(join(dir, "sub"));
+  assert.equal(secondRead(join(dir, "sub"), ["hooks", "install"]).status, 0);
+  assert.ok(existsSync(join(shared, "commit-msg")));
   assert.ok(!existsSync(join(dir, ".git", "hooks", "commit-msg")));
   assert.equal(commit(dir, `Port ${TERM}`).status, 1);
+});
+
+test("hooks install refuses a hooks folder inside the work tree, and changes nothing", () => {
+  const dir = repo();
+  mkdirSync(join(dir, ".githooks"));
+  const tracked = "#!/bin/sh\nexit 0\n";
+  writeFileSync(join(dir, ".githooks", "pre-push"), tracked, { mode: 0o755 });
+  git(dir, "config", "core.hooksPath", ".githooks");
+  assert.equal(commit(dir, "Add the hooks (#2)").status, 0);
+
+  const result = secondRead(dir, ["hooks", "install"]);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /is inside the work tree .*Nothing was installed\. Point core\.hooksPath at a folder/);
+  assert.equal(readFileSync(join(dir, ".githooks", "pre-push"), "utf8"), tracked);
+  assert.equal(git(dir, "status", "--porcelain", "--ignored"), "");
 });
 
 test("hooks install outside a repository fails", () => {
@@ -183,6 +200,14 @@ test("commit-msg checks what git will commit: no comment lines, nothing below th
   const refused = run("git", ["commit", "-q", "-v", "--allow-empty"], dir, "", { ...env, MESSAGE: `Add ${TERM}` });
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /1 finding in this commit message/);
+
+  // Without -v, git cuts at the scissors line only for cleanup=scissors, so the lines below it are committed.
+  const below = { ...env, MESSAGE: `Notes (#2)\n# ------------------------ >8 ------------------------\n${TERM}` };
+  const scissors = run("git", ["commit", "-q", "--allow-empty"], dir, "", below);
+  assert.equal(scissors.status, 1);
+  assert.match(scissors.stderr, /2:1 +private term/);
+  git(dir, "config", "commit.cleanup", "scissors");
+  assert.equal(run("git", ["commit", "-q", "--allow-empty"], dir, "", below).status, 0);
 
   // Without an editor git keeps every line, so a line starting with "#" is checked too.
   assert.equal(commit(dir, `Notes\n\n# ${TERM}`).status, 1);
@@ -298,6 +323,22 @@ test("a deleted branch is skipped, and a force push checks the commits being pus
   const deleted = push(dir, "origin", "--delete", "feature");
   assert.equal(deleted.status, 0, deleted.stderr);
   assert.equal(run("git", ["rev-parse", "--verify", "-q", "feature"], remote).status, 1);
+});
+
+test("pre-push checks the message of an annotated tag, even on a commit the remote has", () => {
+  const dir = installed();
+  bareRemote(dir);
+  assert.equal(commit(dir, "Release (#2)").status, 0);
+  assert.equal(push(dir, "origin", "main").status, 0);
+
+  git(dir, "tag", "-a", "v1", "-m", `Ported from ${TERM}`);
+  const refused = push(dir, "origin", "v1");
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /1 finding in the message of tag v1\. .*\n {2}1:13 +private term/);
+
+  git(dir, "tag", "-a", "v2", "-m", "First release (#2)");
+  git(dir, "tag", "v3");
+  assert.equal(push(dir, "origin", "v2", "v3").status, 0);
 });
 
 test("pre-push passes git's input on to the hook it set aside", () => {

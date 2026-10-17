@@ -1,7 +1,16 @@
 import { spawn, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { constants as os } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 
 export const HOOKS = ["commit-msg", "pre-push"] as const;
@@ -23,6 +32,30 @@ export function git(args: string[], cwd: string, env: NodeJS.ProcessEnv): string
 // Where git looks for hooks, core.hooksPath included.
 export function hooksDir(cwd: string, env: NodeJS.ProcessEnv): string {
   return resolve(cwd, git(["rev-parse", "--git-path", "hooks"], cwd, env).trim());
+}
+
+// A hooks folder in the work tree (core.hooksPath set to a checked-in folder) holds repository files, and an
+// installed hook names paths on this machine. The git folder itself is the one place in the work tree that's fine.
+export function hooksInWorkTree(dir: string, cwd: string, env: NodeJS.ProcessEnv): boolean {
+  const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, env, encoding: "utf8" });
+  if (top.status !== 0) return false;
+  const gitDir = resolve(cwd, git(["rev-parse", "--git-common-dir"], cwd, env).trim());
+  const hooks = existingRealpath(dir);
+  return isInside(hooks, existingRealpath(top.stdout.trim())) && !isInside(hooks, existingRealpath(gitDir));
+}
+
+function isInside(path: string, folder: string): boolean {
+  return path === folder || path.startsWith(folder.endsWith(sep) ? folder : folder + sep);
+}
+
+// The real path of the nearest folder that exists, with the rest of the path after it.
+function existingRealpath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    const parent = dirname(path);
+    return parent === path ? path : join(existingRealpath(parent), basename(path));
+  }
 }
 
 export function shQuote(s: string): string {
@@ -120,8 +153,8 @@ export function exitStatus(result: { status: number | null; signal: NodeJS.Signa
   return number === undefined ? 1 : 128 + number;
 }
 
-// The text git will commit. With an editor, git drops comment lines and everything below the scissors line,
-// which is where `git commit -v` puts the diff. Without one (`git commit -m`), it keeps every line.
+// The text git will commit. With an editor, git drops comment lines, and with `git commit -v` everything below
+// the scissors line, which is where the diff goes. Without an editor (`git commit -m`), it keeps every line.
 export function commitMessage(raw: string, cwd: string, env: NodeJS.ProcessEnv): string {
   if (env.GIT_EDITOR === ":") return raw;
   let comment = "#";
@@ -146,18 +179,21 @@ export function commitMessage(raw: string, cwd: string, env: NodeJS.ProcessEnv):
   if (cleanup === "verbatim" || cleanup === "whitespace") return raw;
   // With "auto", git picks a comment character that no line starts with, so no line can be told apart as one.
   const auto = comment === "auto";
-  const lines = raw.split("\n");
-  const kept: string[] = [];
-  for (const line of lines) {
-    if (/^\S+ -+ >8 -+$/.test(line) && (auto || line.startsWith(comment + " "))) break;
-    if (!auto && cleanup !== "scissors" && line.startsWith(comment)) continue;
-    kept.push(line);
+  let lines = raw.split("\n");
+  // git cuts at the scissors line for cleanup=scissors or `-v`. A diff below it is the sign of `-v`.
+  const isScissors = (line: string) => /^\S+ -+ >8 -+$/.test(line) && (auto || line.startsWith(comment + " "));
+  const scissors = lines.findIndex(isScissors);
+  if (scissors >= 0) {
+    const below = lines.slice(scissors + 1);
+    if (cleanup === "scissors" || below.some((line) => line.startsWith("diff --git "))) lines = lines.slice(0, scissors);
   }
-  return kept.join("\n");
+  if (auto || cleanup === "scissors") return lines.join("\n");
+  return lines.filter((line) => !line.startsWith(comment)).join("\n");
 }
 
 export interface Pushed {
-  kind: "message" | "added";
+  kind: "message" | "added" | "tag";
+  // The commit's short sha, or the tag's name.
   commit: string;
   file?: string;
   text: string;
@@ -170,6 +206,8 @@ const ZERO = /^0+$/;
 export interface PushRange {
   include: string[];
   exclude: string[];
+  // Annotated tags being pushed. A tag's message is public even when the remote has its commit.
+  tags: string[];
 }
 
 // Reads git's pre-push input: one "<local ref> <local sha> <remote ref> <remote sha>" line per ref being pushed.
@@ -186,22 +224,46 @@ export function pushRange(stdin: string, cwd: string, env: NodeJS.ProcessEnv): P
     include.push(localSha);
     if (!ZERO.test(remoteSha)) remoteShas.push(remoteSha);
   }
+  if (include.length === 0) return { include, exclude: [], tags: [] };
+  const types = objectTypes([...include, ...remoteShas], cwd, env);
   // The remote's old tip, when it's here too. After a force push it may not be, and the remote's refs cover it.
-  const exclude: string[] = [];
-  if (include.length > 0 && remoteShas.length > 0) {
-    const known = spawnSync("git", ["cat-file", "--batch-check=%(objectname) %(objecttype)"], {
-      cwd,
-      env,
-      input: remoteShas.join("\n") + "\n",
-      encoding: "utf8",
-    });
-    if (known.status !== 0) throw new GitError(`git cat-file failed: ${known.stderr.trim()}`);
-    for (const line of known.stdout.split("\n")) {
-      const [sha, type] = line.split(" ");
-      if (sha && type === "commit") exclude.push(sha);
-    }
+  const exclude = remoteShas.filter((sha) => types.get(sha) === "commit");
+  const tags = include.filter((sha) => types.get(sha) === "tag");
+  return { include, exclude, tags };
+}
+
+function objectTypes(shas: string[], cwd: string, env: NodeJS.ProcessEnv): Map<string, string> {
+  const known = spawnSync("git", ["cat-file", "--batch-check=%(objectname) %(objecttype)"], {
+    cwd,
+    env,
+    input: shas.join("\n") + "\n",
+    encoding: "utf8",
+  });
+  if (known.status !== 0) throw new GitError(`git cat-file failed: ${known.stderr.trim()}`);
+  const types = new Map<string, string>();
+  for (const line of known.stdout.split("\n")) {
+    const [sha, type] = line.split(" ");
+    if (sha && type) types.set(sha, type);
   }
-  return { include, exclude };
+  return types;
+}
+
+// An annotated tag's name and message, without its signature. A tag of a tag is followed down to the end.
+export function tagMessages(sha: string, cwd: string, env: NodeJS.ProcessEnv): Pushed[] {
+  const found: Pushed[] = [];
+  let next: string | undefined = sha;
+  while (next !== undefined && found.length < 100) {
+    const raw = git(["cat-file", "tag", next], cwd, env);
+    const split = raw.indexOf("\n\n");
+    const headers = (split < 0 ? raw : raw.slice(0, split)).split("\n");
+    const header = (key: string) => headers.find((h) => h.startsWith(key + " "))?.slice(key.length + 1);
+    let message = split < 0 ? "" : raw.slice(split + 2);
+    const signature = message.search(/^-----BEGIN (?:PGP|SSH) SIGNATURE-----$/m);
+    if (signature >= 0) message = message.slice(0, signature);
+    found.push({ kind: "tag", commit: header("tag") ?? next, text: message });
+    next = header("type") === "tag" ? header("object") : undefined;
+  }
+  return found;
 }
 
 // Streams each pushed commit's message and the lines it adds, one file at a time. Merge commits show no diff,
@@ -214,6 +276,7 @@ export async function readPushed(
   onText: (pushed: Pushed) => void,
 ): Promise<void> {
   if (range.include.length === 0) return;
+  for (const tag of range.tags) for (const pushed of tagMessages(tag, cwd, env)) onText(pushed);
   const args = [
     "-c", "core.quotePath=false",
     "log", "--no-color", "--no-ext-diff", "--no-textconv", "--diff-merges=off", "-M", "-p", "-U0",
