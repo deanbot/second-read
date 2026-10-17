@@ -1,0 +1,34 @@
+{
+  "name": "second-read",
+  "version": "0.0.0",
+  "description": "A privacy check on agent-written commits, issues, PRs and comments, for any coding agent.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "second-read": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test \"src/**/*.test.ts\"",
+    "prepack": "tsc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deanbot/second-read.git"
+  },
+  "bugs": {
+    "url": "https://github.com/deanbot/second-read/issues"
+  },
+  "homepage": "https://github.com/deanbot/second-read#readme",
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^7.0.2"
+  }
+}
