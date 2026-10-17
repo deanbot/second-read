@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
+import { fileURLToPath } from "node:url";
 import type { Identity } from "./checks.ts";
 import { main } from "./main.ts";
 
@@ -18,10 +19,10 @@ function systemIdentity(): Identity {
   return { user, home: homedir(), host: hostname(), tempDirs };
 }
 
-async function readStdin(): Promise<string> {
+async function readStdin(): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
 }
 
 process.exitCode = await main({
@@ -30,6 +31,7 @@ process.exitCode = await main({
   platform: process.platform,
   cwd: process.cwd(),
   identity: systemIdentity,
+  command: [process.execPath, fileURLToPath(import.meta.url)],
   readStdin,
   out: (text) => process.stdout.write(text),
   err: (text) => process.stderr.write(text),

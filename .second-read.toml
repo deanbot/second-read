@@ -1,0 +1,2 @@
+# Money words this repository's README and PLAN name on purpose, as the kinds of detail second-read looks for.
+allowed_words = ["billing", "payment", "subscription", "usage limit"]

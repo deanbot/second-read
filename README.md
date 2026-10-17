@@ -11,8 +11,8 @@ revisions, and a commit is public until the history is rewritten.
 second-read reads what's about to go out and stops it when it finds something private. It doesn't rewrite your text.
 It refuses, names what it found, and leaves the fix to you or your agent.
 
-> **Status:** early. The check itself runs; the guards, agent adapters and sweep are planned. [PLAN.md](./PLAN.md)
-> is the design.
+> **Status:** early. The check and the git and `gh` guards run; the agent adapters and sweep are planned.
+> [PLAN.md](./PLAN.md) is the design.
 
 ## What it checks
 
@@ -66,6 +66,23 @@ with its words joined by spaces, hyphens or nothing. It doesn't catch misspellin
 
 A repository can check in a `.second-read.toml` with the same `allowed_*` keys. It can't hold `terms`, and it's an
 error if it names one of your private terms.
+
+## The guards
+
+```sh
+second-read hooks install    # in a repository: adds the commit-msg and pre-push hooks
+second-read shim install     # writes a gh shim, and says which folder to put ahead of gh on PATH
+```
+
+- **`commit-msg`** checks the message git is about to commit.
+- **`pre-push`** checks the message and the added lines of every commit the remote doesn't have yet.
+- **The `gh` shim** checks `--title`, `--body`, `--body-file` and a body read from stdin, for `gh issue` and
+  `gh pr` `create`, `edit` and `comment`, and `gh pr review`. Then it runs the real `gh` with the same arguments and
+  input. Every other command, `gh api` included, passes straight through.
+
+Each guard refuses on a finding, and also when the check itself fails. A hook that was already in place is set aside
+and still runs after the check; `second-read hooks uninstall` removes only second-read's hooks and puts it back. The
+repository's `.second-read.toml` is read from the repository the hook runs in, or from the folder the shim runs in.
 
 ## License
 
