@@ -55,6 +55,9 @@ export const DEFAULT_ALLOWED_EMAILS = [
   "*@users.noreply.github.com",
   "noreply@github.com",
   "git@github.com",
+  "noreply@*",
+  "no-reply@*",
+  "*@users.noreply.gitlab.com",
   "*@example.com",
   "*@example.org",
   "*@example.net",
@@ -86,13 +89,18 @@ const GENERIC_NAMES = new Set([
 const TEMP_FOLDERS = ["/tmp", "/var/tmp", "/private/tmp", "/var/folders", "/private/var/folders"];
 
 // Money and accounts, over folded text. Each entry is [word, pattern]; `allowed_words` switches off a word.
+// A word that's also ordinary dev language (plan, tier, budget, quota) counts only beside a money word.
 const MONEY: [string, string][] = [
   ["billing", "billing|billed"],
   ["invoice", "invoices?|invoiced"],
   ["payment", "payments?|(?:pay|paid|paying) for|pay as you go|pay-as-you-go"],
   ["subscription", "subscriptions?"],
-  ["spending", "spending|spend limits?|spending limits?"],
-  ["budget", "budgets?"],
+  [
+    "spending",
+    "spend(?:ing)? (?:limits?|caps?|alerts?)|spending money" +
+      "|(?:my|our|their|monthly|annual|yearly|personal|household|cloud) spending",
+  ],
+  ["budget", "(?:my|our|monthly|annual|yearly|weekly|personal|household|money|cash|spending) budgets?"],
   [
     "plan",
     "(?:free|paid|pro|max|plus|team|business|enterprise|premium|pricing|billing|monthly|annual|yearly) plans?" +
@@ -100,7 +108,11 @@ const MONEY: [string, string][] = [
   ],
   ["tier", "(?:free|paid|pro|premium) tiers?"],
   ["pricing", "pricing"],
-  ["usage limit", "usage (?:limits?|caps?|quotas?)|spend(?:ing)? caps?|overages?|quotas?"],
+  [
+    "usage limit",
+    "usage (?:limits?|caps?|quotas?)|overage (?:charges?|fees?|costs?|pricing)" +
+      "|(?:billing|plan|paid|subscription|account) quotas?",
+  ],
   ["card", "credit cards?|debit cards?|bank accounts?|bank statements?"],
   ["refund", "refunds?|refunded|chargebacks?"],
   ["trial", "free trials?|trial period"],

@@ -52,13 +52,15 @@ export function loadRepoConfig(path: string, terms: string[]): RepoConfig {
   return allowLists(values, path, []);
 }
 
-// The nearest .second-read.toml at or above `cwd`, stopping at the top of the git repository.
+// The nearest .second-read.toml at or above `cwd`, up to the top of the git repository. Outside a repository
+// there is none, so a stray file in a parent folder is never picked up.
 export function findRepoConfig(cwd: string): string | undefined {
+  const found: string[] = [];
   let dir = cwd;
   for (;;) {
     const candidate = join(dir, REPO_FILE);
-    if (existsSync(candidate)) return candidate;
-    if (existsSync(join(dir, ".git"))) return undefined;
+    if (existsSync(candidate)) found.push(candidate);
+    if (existsSync(join(dir, ".git"))) return found[0];
     const parent = dirname(dir);
     if (parent === dir) return undefined;
     dir = parent;

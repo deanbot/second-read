@@ -92,6 +92,17 @@ test("email addresses outside the allowlist", () => {
   assert.deepEqual(found("typescript@7.0.2 and @types/node@22 and node@v22"), []);
 });
 
+test("noreply addresses in commit trailers are allowed", () => {
+  assert.deepEqual(
+    found(
+      "Co-Authored-By: Some Agent <noreply@example-ai.co>\nCo-Authored-By: Bot <no-reply@example-ci.co>\n" +
+        "Signed-off-by: A <123-example@users.noreply.gitlab.com>",
+    ),
+    [],
+  );
+  assert.deepEqual(found("noreply.desk@corp.co"), [["email", "noreply.desk@corp.co"]]);
+});
+
 test("a name or word inside an allowed email or path isn't a finding, but a private term is", () => {
   assert.deepEqual(found("Example <1234+example@users.noreply.github.com>"), [["account name", "Example"]]);
   assert.deepEqual(found("billing@example.com and ~/.config/example-app"), []);
@@ -108,6 +119,11 @@ test("money and account words", () => {
   assert.deepEqual(found("cancel the subscription"), [["money (subscription)", "subscription"]]);
   assert.deepEqual(found("not paying for that"), [["money (payment)", "paying for"]]);
   assert.deepEqual(found("my credit card"), [["money (card)", "credit card"]]);
+  assert.deepEqual(found("over our monthly budget"), [["money (budget)", "monthly budget"]]);
+  assert.deepEqual(found("set a spend limit"), [["money (spending)", "spend limit"]]);
+  assert.deepEqual(found("cut my spending"), [["money (spending)", "my spending"]]);
+  assert.deepEqual(found("the overage charges"), [["money (usage limit)", "overage charges"]]);
+  assert.deepEqual(found("out of plan quota"), [["money (usage limit)", "plan quota"]]);
 });
 
 test("amounts of money", () => {
@@ -123,6 +139,13 @@ test("amounts of money", () => {
 test("dev words near money words are not money", () => {
   assert.deepEqual(
     found("Read PLAN.md and the test plan. Plan the release; run it with $1 or $2. Rate limits, 5 ms, v1.2.3."),
+    [],
+  );
+  assert.deepEqual(
+    found(
+      "Keep the size budget and the error budget. Raise the disk quota and the API quota. " +
+        "Spending more time on tests. Overages in the token counter. Budgets for latency.",
+    ),
     [],
   );
 });

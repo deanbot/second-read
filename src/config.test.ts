@@ -85,6 +85,14 @@ test("the repository file is found at or above the working folder, up to the top
   assert.equal(findRepoConfig(join(repo, "a", "b")), path);
 });
 
+test("outside a git repository there is no repository file, even one in a parent folder", () => {
+  const outside = join(scratch, "outside", "a", "b");
+  mkdirSync(outside, { recursive: true });
+  write("outside/.second-read.toml", 'allowed_words = ["billing"]\n');
+  write("outside/a/b/.second-read.toml", 'allowed_words = ["billing"]\n');
+  assert.equal(findRepoConfig(outside), undefined);
+});
+
 test("rules join both allowlists and take terms from the user only", () => {
   const user = { terms: ["t"], allowedWords: ["a"], allowedEmails: ["b"], allowedPaths: ["c"] };
   const repo = { allowedWords: ["d"], allowedEmails: ["e"], allowedPaths: ["f"] };
