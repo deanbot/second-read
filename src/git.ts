@@ -170,10 +170,17 @@ export function managedDir(cwd: string, env: NodeJS.ProcessEnv): string {
 
 export interface ManagedInstall {
   dir: string;
-  // core.hooksPath before, as git expands it.
+  // The repository's hooks folder, as git expands core.hooksPath.
   hooksPath: string;
   done: string[];
 }
+
+// git runs these on every ref update and every index write, `git status` included, so a forwarder that starts sh
+// each time slows rebases and editors down. They're forwarded only when the repository has them at install.
+export const FREQUENT_HOOKS = ["reference-transaction", "post-index-change"];
+
+// The repository's hooks folder the forwarders point at, kept so a later install can write them again.
+const FORWARD_TO = "second-read.hooksPath";
 
 // For a hooks folder in the work tree: second-read's hooks go in a folder inside the git folder, which this
 // clone's core.hooksPath then points at. Each of the repository's hooks still runs, through a forwarder there.
@@ -186,24 +193,58 @@ export function installManaged(cwd: string, env: NodeJS.ProcessEnv, command: str
     throw new GitError(`core.hooksPath already points at ${dir}`);
   }
   const local = configGet(["--local", "--get", "core.hooksPath"], cwd, env);
+  const done = writeManaged(dir, hooksPath, cwd, env, command);
+  if (local === undefined) spawnSync("git", ["config", "--local", "--unset-all", RECORD], { cwd, env });
+  else git(["config", "--local", RECORD, local], cwd, env);
+  git(["config", "--local", FORWARD_TO, hooksPath], cwd, env);
+  git(["config", "--local", "core.hooksPath", dir], cwd, env);
+  return { dir, hooksPath, done };
+}
+
+// Whether `dir`, where git looks for hooks, is the folder installManaged wrote.
+export function isManagedDir(dir: string, cwd: string, env: NodeJS.ProcessEnv): boolean {
+  return existingRealpath(dir) === existingRealpath(managedDir(cwd, env));
+}
+
+// A second install writes the whole folder again, forwarding to the same hooks folder as before, so it picks up
+// a frequent hook the repository has added since, and any hook a newer second-read knows.
+export function refreshManaged(cwd: string, env: NodeJS.ProcessEnv, command: string[]): ManagedInstall {
+  const dir = managedDir(cwd, env);
+  const hooksPath = configGet(["--local", "--get", FORWARD_TO], cwd, env);
+  if (hooksPath === undefined) {
+    throw new GitError(`${dir} doesn't say which hooks it forwards to; run "second-read hooks uninstall" first`);
+  }
+  return { dir, hooksPath, done: writeManaged(dir, hooksPath, cwd, env, command) };
+}
+
+function writeManaged(dir: string, hooksPath: string, cwd: string, env: NodeJS.ProcessEnv, command: string[]) {
+  const top = git(["rev-parse", "--show-toplevel"], cwd, env).trim();
+  const theirs = (name: string) => existsSync(resolve(top, hooksPath, name));
   mkdirSync(dir, { recursive: true });
+  const skipped: string[] = [];
   for (const name of GIT_HOOKS) {
     const forwarder = forwarderScript(hooksPath, name);
     if ((HOOKS as readonly string[]).includes(name)) {
       writeFileSync(join(dir, name), hookScript(command), { mode: 0o755 });
       writeFileSync(join(dir, name + PREVIOUS), forwarder, { mode: 0o755 });
+    } else if (FREQUENT_HOOKS.includes(name) && !theirs(name)) {
+      rmSync(join(dir, name), { force: true });
+      skipped.push(name);
     } else writeFileSync(join(dir, name), forwarder, { mode: 0o755 });
   }
-  if (local === undefined) spawnSync("git", ["config", "--local", "--unset-all", RECORD], { cwd, env });
-  else git(["config", "--local", RECORD, local], cwd, env);
-  git(["config", "--local", "core.hooksPath", dir], cwd, env);
   const done = HOOKS.map((name) => `${name}: installed; the repository's own ${name} runs after the check`);
   done.push(`every other hook githooks(5) lists runs the repository's own, from ${hooksPath}, but push-to-checkout`);
-  const top = git(["rev-parse", "--show-toplevel"], cwd, env).trim();
-  if (existsSync(resolve(top, hooksPath, "push-to-checkout"))) {
+  if (skipped.length > 0) {
+    done.push(
+      `${skipped.join(" and ")}: not forwarded, since the repository doesn't have ` +
+        `${skipped.length === 1 ? "it and git runs it" : "them and git runs them"} often; ` +
+        `run "second-read hooks install" again after adding one`,
+    );
+  }
+  if (theirs("push-to-checkout")) {
     done.push("warning: the repository's push-to-checkout won't run while second-read's hooks are installed");
   }
-  return { dir, hooksPath, done };
+  return done;
 }
 
 // Undoes installManaged, or returns undefined when it was never run here. core.hooksPath goes back to what this

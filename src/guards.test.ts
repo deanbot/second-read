@@ -254,7 +254,7 @@ test("a linked worktree runs its own copy of the repository's hooks, after the c
   git(dir, "add", "-A");
   git(dir, "commit", "-q", "-m", "Add the hooks (#10)");
   const installed = secondRead(dir, ["hooks", "install"]);
-  assert.match(installed.stdout, /but push-to-checkout\n {2}warning: the repository's push-to-checkout won't run/);
+  assert.match(installed.stdout, /\n {2}warning: the repository's push-to-checkout won't run/);
   const tree = join(fresh("worktree"), "tree");
   git(dir, "worktree", "add", "-q", "-b", "other", tree);
   writeFileSync(join(tree, ".githooks", "commit-msg"), `#!/bin/sh\necho "linked $(pwd)" >> '${join(tree, "log")}'\n`);
@@ -265,6 +265,41 @@ test("a linked worktree runs its own copy of the repository's hooks, after the c
   const top = git(tree, "rev-parse", "--show-toplevel").trim();
   assert.equal(readFileSync(join(tree, "log"), "utf8"), `linked ${top}\n`);
   assert.equal(read(), before);
+});
+
+test("the hooks git runs most often are forwarded only when the repository has them at install", () => {
+  const { dir } = trackedHooks(["commit-msg"]);
+  const result = secondRead(dir, ["hooks", "install"]);
+  assert.match(result.stdout, /reference-transaction and post-index-change: not forwarded, since the repository/);
+  const managed = git(dir, "config", "--local", "core.hooksPath").trim();
+  assert.ok(!existsSync(join(managed, "reference-transaction")));
+  assert.ok(!existsSync(join(managed, "post-index-change")));
+  assert.ok(existsSync(join(managed, "post-commit")));
+
+  const other = trackedHooks(["reference-transaction"]);
+  const otherInstall = secondRead(other.dir, ["hooks", "install"]);
+  assert.match(otherInstall.stdout, /\n {2}post-index-change: not forwarded, since the repository doesn't have it /);
+  assert.equal(commit(other.dir, "Clean (#10)").status, 0);
+  assert.match(other.read(), /^reference-transaction prepared in /m);
+});
+
+test("installing again writes the forwarders again, for hooks the repository has added since", () => {
+  const { dir, hook, read } = trackedHooks(["push-to-checkout"]);
+  assert.equal(secondRead(dir, ["hooks", "install"]).status, 0);
+  const managed = git(dir, "config", "--local", "core.hooksPath").trim();
+  hook("post-index-change");
+  assert.ok(!existsSync(join(managed, "post-index-change")));
+
+  const again = secondRead(dir, ["hooks", "install"]);
+  assert.equal(again.status, 0, again.stderr);
+  assert.match(again.stdout, /already installed in .*; wrote the hooks again, forwarding to \.githooks\./);
+  assert.match(again.stdout, /reference-transaction: not forwarded/);
+  assert.match(again.stdout, /warning: the repository's push-to-checkout won't run/);
+  assert.ok(existsSync(join(managed, "post-index-change")));
+  assert.equal(git(dir, "config", "--local", "core.hooksPath").trim(), managed);
+  assert.equal(git(dir, "config", "--local", "second-read.previousHooksPath").trim(), ".githooks");
+  assert.equal(commit(dir, "Clean (#10)", { "notes.txt": "one\n" }).status, 0);
+  assert.match(read(), /^post-index-change /m);
 });
 
 test("installing twice keeps the recorded hooks folder, and uninstall puts core.hooksPath back", () => {
@@ -289,6 +324,8 @@ test("installing twice keeps the recorded hooks folder, and uninstall puts core.
 test("uninstall unsets core.hooksPath in this clone when it came from the global config", () => {
   const { dir, env } = trackedHooks(["commit-msg"], { global: true });
   assert.equal(run(process.execPath, [cli, "hooks", "install"], dir, "", env).status, 0);
+  const again = run(process.execPath, [cli, "hooks", "install"], dir, "", env);
+  assert.match(again.stdout, /wrote the hooks again, forwarding to \.githooks\./);
   assert.equal(run("git", ["commit", "-q", "--allow-empty", "-m", `Port ${TERM}`], dir, "", env).status, 1);
   const result = run(process.execPath, [cli, "hooks", "uninstall"], dir, "", env);
   assert.match(result.stdout, /core\.hooksPath: unset in this clone/);

@@ -86,8 +86,10 @@ repository's `.second-read.toml` is read from the repository the hook runs in, o
 
 When `core.hooksPath` points at a checked-in folder, the hooks go into a folder inside `.git` instead, and this
 clone's `core.hooksPath` points there. The repository's hooks still run, including ones added later: each hook
-githooks(5) lists, except `push-to-checkout`. `hooks uninstall` puts `core.hooksPath` back. Running the repository's
-own setup step again, if it sets `core.hooksPath`, turns the guards off until you install them again.
+githooks(5) lists, except `push-to-checkout`. git runs `reference-transaction` and `post-index-change` very often, so
+they run only if the repository had them when you installed; install again after adding one. `hooks uninstall` puts
+`core.hooksPath` back. Running the repository's own setup step again, if it sets `core.hooksPath`, turns the guards
+off until you install them again.
 
 ## License
 

@@ -21,9 +21,11 @@ import {
   hooksInWorkTree,
   installHooks,
   installManaged,
+  isManagedDir,
   type Pushed,
   pushRange,
   readPushed,
+  refreshManaged,
   runPrevious,
   uninstallHooks,
   uninstallManaged,
@@ -177,6 +179,14 @@ function runHooks(io: Io, args: string[]): number {
     }
   }
   const dir = hooksDir(io.cwd, io.env);
+  if (action === "install" && isManagedDir(dir, io.cwd, io.env)) {
+    const managed = refreshManaged(io.cwd, io.env, io.command);
+    io.out(
+      `second-read: already installed in ${managed.dir}; wrote the hooks again, forwarding to ` +
+        `${managed.hooksPath}.\n${list(managed.done)}`,
+    );
+    return EXIT.clean;
+  }
   // The installed hooks name paths on this machine, so they never go in a checked-in hooks folder.
   if (action === "install" && hooksInWorkTree(dir, io.cwd, io.env)) {
     const managed = installManaged(io.cwd, io.env, io.command);
