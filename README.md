@@ -18,10 +18,15 @@ It refuses, names what it found, and leaves the fix to you or your agent.
 - **Paths on your machine:** anything under your home folder, temporary and scratch folders.
 - **Who you are on this machine:** your account name, your machine's name and email addresses, apart from the
   ones you allow (such as GitHub's `noreply` address).
+- **Money and accounts:** plans, billing, payments, spending, usage limits, what you will or won't pay for, and
+  credentials.
 - **Your own list of private words:** project, folder, character or client names, in a file on your machine that is
   never checked in anywhere.
-- **Paraphrases**, where an agent tool can run a model check: "your disk is nearly full", a description of your
-  accounts or your setup.
+- **What you told the agent in private**, where an agent tool can run a model check. That means your reasons,
+  feelings, frustrations and preferences, and your life outside the work, quoted or paraphrased. A post should say
+  what changed, not why you personally decided it, unless that reason is about the work.
+- **Other paraphrases**, by the same model check: "your disk is nearly full", a description of your accounts or
+  your setup.
 
 It isn't a secrets scanner. Tools like gitleaks find keys and tokens, and second-read is meant to run beside one.
 

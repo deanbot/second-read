@@ -3,8 +3,10 @@
 ## 1. The problem
 
 An agent working for one person posts far more prose than that person can read: every commit message, issue, PR
-body and comment. A rule in the agent's instructions ("never post paths on my machine") holds most of the time. When
-it doesn't, the slip is public at once, and it's hard to take back:
+body and comment. The agent has also heard everything the person said while working, so a post can carry their
+private conversation along with the work: a reason, a frustration, a decision about money. A rule in the agent's
+instructions ("never post paths on my machine") holds most of the time. When it doesn't, the slip is public at
+once, and it's hard to take back:
 
 - an edited issue or comment keeps its old revisions, and each one has to be deleted by hand;
 - a commit stays public until the history is rewritten and force-pushed.
@@ -35,6 +37,9 @@ So the check has to run **before** a post goes out, and it can't rely on the per
     allowed generic name;
   - temporary and scratch folders;
   - the account name, the machine name, and email addresses outside the allowlist;
+  - money and accounts: words for plans, billing, payments, subscriptions, spending and usage limits, and amounts
+    of money. These are the most likely to give false alarms in some repositories, so a repository's allowlist
+    can switch off single words;
   - every term on the user's list, matched case-insensitively at word boundaries, after Unicode normalisation.
 - **Configuration:**
   - the user's file in the platform's config folder (`~/.config/second-read/` where there is no other convention):
@@ -59,8 +64,12 @@ These catch every agent that posts through `git` and `gh`, and the user too.
 What the guards can't see: an agent that posts through its own GitHub tool, or text it shapes before calling `gh`.
 
 - **Claude Code:** a plugin with a hook on tool calls. It runs the core on Bash commands that post, and on GitHub
-  tool calls from MCP servers. It adds a model-judged check for paraphrases (a description of the user's machine,
-  home, accounts or private projects), using what Claude Code's hooks offer at the time it is built.
+  tool calls from MCP servers. It adds a model-judged check, using what Claude Code's hooks offer at the time it
+  is built. The check's main target is **private dialog**: what the user told the agent in conversation,
+  quoted or paraphrased. That covers their reasons, feelings, frustrations, preferences, money and life outside
+  the work. A post says what changed, not why the user personally decided it, unless that reason is about the work.
+  The check also looks for other paraphrased details: a description of the user's machine, home, accounts or
+  private projects.
 - **Others** (Gemini CLI, Codex, Kiro, …): one adapter each, written from that tool's current hook or extension docs
   when someone uses it. Where a tool has no hook, the git and `gh` guards still apply.
 
