@@ -11,7 +11,8 @@ revisions, and a commit is public until the history is rewritten.
 second-read reads what's about to go out and stops it when it finds something private. It doesn't rewrite your text.
 It refuses, names what it found, and leaves the fix to you or your agent.
 
-> **Status:** planned. Nothing here runs yet. [PLAN.md](./PLAN.md) is the design.
+> **Status:** early. The check itself runs; the guards, agent adapters and sweep are planned. [PLAN.md](./PLAN.md)
+> is the design.
 
 ## What it checks
 
@@ -34,6 +35,32 @@ It isn't a secrets scanner. Tools like gitleaks find keys and tokens, and second
 - **A sweep** of what's already posted to a repository, edit histories included.
 
 The check runs on your machine, and the text it reads goes nowhere else.
+
+## Using the check
+
+```sh
+second-read init                                  # writes your config file, with no terms in it
+echo "$MESSAGE" | second-read check --kind commit
+```
+
+`check` exits `0` when the text is clean, `1` with findings and `2` when the check itself fails, so a guard can
+refuse on anything but `0`. The report names each finding's category, line and text, and is printed only on your
+machine.
+
+Your config file is `~/.config/second-read/config.toml` (`$XDG_CONFIG_HOME`, or `%APPDATA%` on Windows):
+
+```toml
+terms = ["example-private-project"]       # never posted; see below
+allowed_words = ["billing"]               # money words that are fine to post
+allowed_emails = ["*@example.com"]
+allowed_paths = ["~/.config/some-tool"]
+```
+
+A term matches in any case, with or without accents, in fullwidth forms, with invisible characters inside it, and
+with its words joined by spaces, hyphens or nothing. It doesn't catch misspellings.
+
+A repository can check in a `.second-read.toml` with the same `allowed_*` keys. It can't hold `terms`, and it's an
+error if it names one of your private terms.
 
 ## License
 
