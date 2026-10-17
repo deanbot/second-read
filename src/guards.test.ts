@@ -335,10 +335,19 @@ test("pre-push checks the message of an annotated tag, even on a commit the remo
   const refused = push(dir, "origin", "v1");
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /1 finding in the message of tag v1\. .*\n {2}1:13 +private term/);
+  assert.match(refused.stderr, /fix the tag with git tag -f -a, and push again\./);
 
-  git(dir, "tag", "-a", "v2", "-m", "First release (#2)");
-  git(dir, "tag", "v3");
-  assert.equal(push(dir, "origin", "v2", "v3").status, 0);
+  // A commit and a tag together name both fixes.
+  git(dir, "commit", "-q", "--allow-empty", "--no-verify", "-m", `More from ${TERM}`);
+  const both = push(dir, "origin", "main", "v1");
+  assert.equal(both.status, 1);
+  assert.match(both.stderr, /fix the commits, and the tag with git tag -f -a, and push again\./);
+  git(dir, "reset", "-q", "--hard", "HEAD~1");
+  git(dir, "tag", "-f", "-a", "v1", "-m", "First release (#2)");
+  assert.equal(push(dir, "origin", "v1").status, 0);
+
+  git(dir, "tag", "v2");
+  assert.equal(push(dir, "origin", "v2").status, 0);
 });
 
 test("pre-push passes git's input on to the hook it set aside", () => {

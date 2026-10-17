@@ -190,6 +190,7 @@ async function runHook(io: Io, args: string[]): Promise<number> {
   const { identity, rules } = loadRules(io);
   let input: Buffer | undefined;
   let sections: Section[];
+  const found = { commits: 0, tags: 0 };
   if ((name as HookName) === "commit-msg") {
     const file = gitArgs[0];
     if (file === undefined) throw new Error("commit-msg was given no message file");
@@ -201,15 +202,23 @@ async function runHook(io: Io, args: string[]): Promise<number> {
     sections = [];
     await readPushed(range, gitArgs[0] ?? "", io.cwd, io.env, (pushed) => {
       const findings = checkPushed(pushed, identity, rules);
-      if (findings.length > 0) sections.push({ where: pushedWhere(pushed), findings });
+      if (findings.length === 0) return;
+      sections.push({ where: pushedWhere(pushed), findings });
+      found[pushed.kind === "tag" ? "tags" : "commits"]++;
     });
   }
   sections = sections.filter((s) => s.findings.length > 0);
   if (sections.length > 0) {
-    io.err(report(sections, name === "commit-msg" ? FIX_TEXT : "fix the commits and push again"));
+    io.err(report(sections, name === "commit-msg" ? FIX_TEXT : pushFix(found)));
     return EXIT.findings;
   }
   return runPrevious(resolve(io.cwd, hookPath), gitArgs, io.cwd, io.env, input);
+}
+
+function pushFix({ commits, tags }: { commits: number; tags: number }): string {
+  const tag = `the ${tags === 1 ? "tag" : "tags"} with git tag -f -a`;
+  if (commits === 0) return `fix ${tag}, and push again`;
+  return tags === 0 ? "fix the commits and push again" : `fix the commits, and ${tag}, and push again`;
 }
 
 function checkPushed(pushed: Pushed, identity: Identity, rules: Rules): Finding[] {
