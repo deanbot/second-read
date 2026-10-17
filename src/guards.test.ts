@@ -156,19 +156,155 @@ test("hooks install respects core.hooksPath", () => {
   assert.equal(commit(dir, `Port ${TERM}`).status, 1);
 });
 
-test("hooks install refuses a hooks folder inside the work tree, and changes nothing", () => {
+// A repository whose hooks are checked in: each one notes its name, arguments, folder and input in a log.
+function trackedHooks(names: string[], options: { global?: boolean } = {}) {
   const dir = repo();
+  const log = join(fresh("log"), "log");
   mkdirSync(join(dir, ".githooks"));
-  const tracked = "#!/bin/sh\nexit 0\n";
-  writeFileSync(join(dir, ".githooks", "pre-push"), tracked, { mode: 0o755 });
-  git(dir, "config", "core.hooksPath", ".githooks");
-  assert.equal(commit(dir, "Add the hooks (#2)").status, 0);
+  const hook = (name: string, version = "") =>
+    writeFileSync(
+      join(dir, ".githooks", name),
+      `#!/bin/sh\necho "${name}${version} $* in $(pwd)" >> '${log}'\n` +
+        (name === "pre-push" ? `cat >> '${log}'\n` : "") +
+        "exit 0\n",
+      { mode: 0o755 },
+    );
+  for (const name of names) hook(name);
+  let env: NodeJS.ProcessEnv = {};
+  if (options.global) {
+    const global = join(fresh("gitconfig"), "gitconfig");
+    copyFileSync(gitconfig, global);
+    git(dir, "config", "-f", global, "core.hooksPath", ".githooks");
+    env = { GIT_CONFIG_GLOBAL: global };
+  } else git(dir, "config", "core.hooksPath", ".githooks");
+  const read = () => (existsSync(log) ? readFileSync(log, "utf8") : "");
+  return { dir, hook, read, env };
+}
+
+test("with a checked-in hooks folder, install puts the hooks inside the git folder, for this clone only", () => {
+  const { dir, read } = trackedHooks(["commit-msg", "post-commit"]);
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "-m", "Add the hooks (#10)");
+  const before = read();
 
   const result = secondRead(dir, ["hooks", "install"]);
-  assert.equal(result.status, 2);
-  assert.match(result.stderr, /is inside the work tree .*Nothing was installed\. Point core\.hooksPath at a folder/);
-  assert.equal(readFileSync(join(dir, ".githooks", "pre-push"), "utf8"), tracked);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /\.githooks is in the work tree, so the hooks went into .*second-read-hooks/);
+  assert.match(result.stdout, /for this clone only \(it was "\.githooks"\)/);
+  assert.match(result.stdout, /Running the repository's own setup step again, if it sets core\.hooksPath, turns/);
+  const managed = git(dir, "config", "--local", "core.hooksPath").trim();
+  assert.match(managed, /\.git[\\/]second-read-hooks$/);
+  assert.equal(git(dir, "config", "--local", "second-read.previousHooksPath").trim(), ".githooks");
   assert.equal(git(dir, "status", "--porcelain", "--ignored"), "");
+
+  // A refused commit runs none of the repository's hooks.
+  assert.equal(commit(dir, `Port ${TERM}`).status, 1);
+  assert.equal(read(), before);
+
+  // A commit from a subfolder runs the repository's hooks from the top of the work tree.
+  mkdirSync(join(dir, "sub"));
+  const top = git(dir, "rev-parse", "--show-toplevel").trim();
+  assert.equal(run("git", ["commit", "-q", "--allow-empty", "-m", "Clean (#10)"], join(dir, "sub")).status, 0);
+  assert.equal(
+    read().slice(before.length),
+    `commit-msg .git/COMMIT_EDITMSG in ${top}\npost-commit  in ${top}\n`,
+  );
+});
+
+test("the repository's hooks keep running as they change, and as new ones are added", () => {
+  const { dir, hook, read } = trackedHooks(["commit-msg"]);
+  assert.equal(secondRead(dir, ["hooks", "install"]).status, 0);
+  hook("commit-msg", "-v2");
+  hook("pre-commit");
+  assert.equal(commit(dir, "Clean (#10)").status, 0);
+  assert.match(read(), /^pre-commit {2}in .*\ncommit-msg-v2 \.git\/COMMIT_EDITMSG in /m);
+});
+
+test("the repository's pre-push gets git's input after the check", () => {
+  const { dir, read } = trackedHooks(["pre-push"]);
+  assert.equal(secondRead(dir, ["hooks", "install"]).status, 0);
+  const remote = bareRemote(dir);
+  git(dir, "commit", "-q", "--allow-empty", "--no-verify", "-m", `Port ${TERM}`);
+  assert.equal(push(dir, "origin", "main").status, 1);
+  assert.equal(read(), "");
+
+  git(dir, "commit", "-q", "--amend", "--allow-empty", "--no-verify", "-m", "Clean (#10)");
+  assert.equal(push(dir, "origin", "main").status, 0);
+  const top = git(dir, "rev-parse", "--show-toplevel").trim();
+  assert.equal(
+    read(),
+    `pre-push origin ${remote} in ${top}\nrefs/heads/main ${head(dir)} refs/heads/main ${"0".repeat(40)}\n`,
+  );
+});
+
+test("a push with no pre-push of the repository's own goes through, however long git's input", () => {
+  const { dir } = trackedHooks([]);
+  assert.equal(secondRead(dir, ["hooks", "install"]).status, 0);
+  bareRemote(dir);
+  assert.equal(commit(dir, "Clean (#10)").status, 0);
+  const sha = head(dir);
+  const refs = Array.from({ length: 1000 }, (_, i) => `create refs/tags/release-${i} ${sha}\n`).join("");
+  assert.equal(run("git", ["update-ref", "--stdin"], dir, refs).status, 0);
+  const pushed = push(dir, "origin", "main", "--tags");
+  assert.equal(pushed.status, 0, pushed.stderr);
+});
+
+test("a linked worktree runs its own copy of the repository's hooks, after the check", () => {
+  const { dir, read } = trackedHooks(["commit-msg", "push-to-checkout"]);
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "-m", "Add the hooks (#10)");
+  const installed = secondRead(dir, ["hooks", "install"]);
+  assert.match(installed.stdout, /but push-to-checkout\n {2}warning: the repository's push-to-checkout won't run/);
+  const tree = join(fresh("worktree"), "tree");
+  git(dir, "worktree", "add", "-q", "-b", "other", tree);
+  writeFileSync(join(tree, ".githooks", "commit-msg"), `#!/bin/sh\necho "linked $(pwd)" >> '${join(tree, "log")}'\n`);
+  const before = read();
+
+  assert.equal(commit(tree, `Port ${TERM}`).status, 1);
+  assert.equal(commit(tree, "Clean (#10)").status, 0);
+  const top = git(tree, "rev-parse", "--show-toplevel").trim();
+  assert.equal(readFileSync(join(tree, "log"), "utf8"), `linked ${top}\n`);
+  assert.equal(read(), before);
+});
+
+test("installing twice keeps the recorded hooks folder, and uninstall puts core.hooksPath back", () => {
+  const { dir, read } = trackedHooks(["commit-msg"]);
+  assert.equal(secondRead(dir, ["hooks", "install"]).status, 0);
+  const managed = git(dir, "config", "--local", "core.hooksPath").trim();
+  const second = secondRead(dir, ["hooks", "install"]);
+  assert.equal(second.status, 0, second.stderr);
+  assert.match(second.stdout, /already installed/);
+  assert.equal(git(dir, "config", "--local", "second-read.previousHooksPath").trim(), ".githooks");
+
+  const result = secondRead(dir, ["hooks", "uninstall"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /core\.hooksPath: back to "\.githooks"/);
+  assert.equal(git(dir, "config", "--local", "core.hooksPath").trim(), ".githooks");
+  assert.equal(run("git", ["config", "--local", "--get-regexp", "^second-read\\."], dir).stdout, "");
+  assert.ok(!existsSync(managed));
+  assert.equal(commit(dir, `Port ${TERM}`).status, 0);
+  assert.match(read(), /^commit-msg /);
+});
+
+test("uninstall unsets core.hooksPath in this clone when it came from the global config", () => {
+  const { dir, env } = trackedHooks(["commit-msg"], { global: true });
+  assert.equal(run(process.execPath, [cli, "hooks", "install"], dir, "", env).status, 0);
+  assert.equal(run("git", ["commit", "-q", "--allow-empty", "-m", `Port ${TERM}`], dir, "", env).status, 1);
+  const result = run(process.execPath, [cli, "hooks", "uninstall"], dir, "", env);
+  assert.match(result.stdout, /core\.hooksPath: unset in this clone/);
+  assert.equal(run("git", ["config", "--local", "core.hooksPath"], dir, "", env).status, 1);
+  assert.equal(run("git", ["config", "core.hooksPath"], dir, "", env).stdout.trim(), ".githooks");
+});
+
+test("uninstall leaves core.hooksPath alone when the repository's setup step has reset it", () => {
+  const { dir } = trackedHooks(["commit-msg"]);
+  assert.equal(secondRead(dir, ["hooks", "install"]).status, 0);
+  const managed = git(dir, "config", "--local", "core.hooksPath").trim();
+  git(dir, "config", "core.hooksPath", "other-hooks");
+  const result = secondRead(dir, ["hooks", "uninstall"]);
+  assert.match(result.stdout, /left as it is; it no longer points at second-read's hooks/);
+  assert.equal(git(dir, "config", "--local", "core.hooksPath").trim(), "other-hooks");
+  assert.ok(!existsSync(managed));
 });
 
 test("hooks install outside a repository fails", () => {

@@ -3,9 +3,11 @@ import {
   accessSync,
   constants,
   existsSync,
+  mkdirSync,
   readFileSync,
   realpathSync,
   renameSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -19,6 +21,20 @@ export type HookName = (typeof HOOKS)[number];
 export const HOOK_MARKER = "# Added by second-read.";
 // A hook that was already there is set aside under this suffix, and second-read's hook runs it after the check.
 export const PREVIOUS = ".second-read-previous";
+
+// Every hook git runs, from githooks(5), except push-to-checkout: when that one exists, git leaves the work tree
+// update to it, so a stand-in that does nothing would leave the tree stale.
+export const GIT_HOOKS = [
+  "applypatch-msg", "pre-applypatch", "post-applypatch", "pre-commit", "pre-merge-commit", "prepare-commit-msg",
+  "commit-msg", "post-commit", "pre-rebase", "post-checkout", "post-merge", "pre-push", "pre-receive", "update",
+  "proc-receive", "post-receive", "post-update", "reference-transaction", "pre-auto-gc", "post-rewrite",
+  "sendemail-validate", "fsmonitor-watchman", "p4-changelist", "p4-prepare-changelist", "p4-post-changelist",
+  "p4-pre-submit", "post-index-change",
+];
+
+// Where the hooks go when the repository's own hooks folder is checked in, inside the git folder.
+export const MANAGED = "second-read-hooks";
+const RECORD = "second-read.previousHooksPath";
 
 export class GitError extends Error {}
 
@@ -129,6 +145,91 @@ export function uninstallHooks(dir: string): string[] {
   return done;
 }
 
+// A stand-in for one of the repository's own hooks. git runs hooks from the top of the work tree (or the git
+// folder, for the server-side ones), which is also where it resolves a relative core.hooksPath.
+// It's plain sh, since some hooks run on every ref update.
+export function forwarderScript(hooksPath: string, name: string): string {
+  return `#!/bin/sh
+${HOOK_MARKER} It runs the repository's own ${name} hook, if there is one.
+hook=${shQuote(`${hooksPath.replace(/\/+$/, "")}/${name}`)}
+[ -x "$hook" ] || exit 0
+exec "$hook" "$@"
+`;
+}
+
+function configGet(args: string[], cwd: string, env: NodeJS.ProcessEnv): string | undefined {
+  const result = spawnSync("git", ["config", ...args], { cwd, env, encoding: "utf8" });
+  if (result.status === 0) return result.stdout.replace(/\n$/, "");
+  if (result.status === 1) return undefined;
+  throw new GitError(`git config failed: ${result.stderr.trim()}`);
+}
+
+export function managedDir(cwd: string, env: NodeJS.ProcessEnv): string {
+  return join(resolve(cwd, git(["rev-parse", "--git-common-dir"], cwd, env).trim()), MANAGED);
+}
+
+export interface ManagedInstall {
+  dir: string;
+  // core.hooksPath before, as git expands it.
+  hooksPath: string;
+  done: string[];
+}
+
+// For a hooks folder in the work tree: second-read's hooks go in a folder inside the git folder, which this
+// clone's core.hooksPath then points at. Each of the repository's hooks still runs, through a forwarder there.
+export function installManaged(cwd: string, env: NodeJS.ProcessEnv, command: string[]): ManagedInstall {
+  const dir = managedDir(cwd, env);
+  const hooksPath = configGet(["--path", "--get", "core.hooksPath"], cwd, env);
+  if (hooksPath === undefined) throw new GitError("core.hooksPath isn't set, so there's nothing to forward to");
+  // A forwarder that pointed back into this folder would run itself forever.
+  if (existingRealpath(resolve(cwd, hooksPath)) === existingRealpath(dir)) {
+    throw new GitError(`core.hooksPath already points at ${dir}`);
+  }
+  const local = configGet(["--local", "--get", "core.hooksPath"], cwd, env);
+  mkdirSync(dir, { recursive: true });
+  for (const name of GIT_HOOKS) {
+    const forwarder = forwarderScript(hooksPath, name);
+    if ((HOOKS as readonly string[]).includes(name)) {
+      writeFileSync(join(dir, name), hookScript(command), { mode: 0o755 });
+      writeFileSync(join(dir, name + PREVIOUS), forwarder, { mode: 0o755 });
+    } else writeFileSync(join(dir, name), forwarder, { mode: 0o755 });
+  }
+  if (local === undefined) spawnSync("git", ["config", "--local", "--unset-all", RECORD], { cwd, env });
+  else git(["config", "--local", RECORD, local], cwd, env);
+  git(["config", "--local", "core.hooksPath", dir], cwd, env);
+  const done = HOOKS.map((name) => `${name}: installed; the repository's own ${name} runs after the check`);
+  done.push(`every other hook githooks(5) lists runs the repository's own, from ${hooksPath}, but push-to-checkout`);
+  const top = git(["rev-parse", "--show-toplevel"], cwd, env).trim();
+  if (existsSync(resolve(top, hooksPath, "push-to-checkout"))) {
+    done.push("warning: the repository's push-to-checkout won't run while second-read's hooks are installed");
+  }
+  return { dir, hooksPath, done };
+}
+
+// Undoes installManaged, or returns undefined when it was never run here. core.hooksPath goes back to what this
+// clone had set, or is unset so a value from the global config shows through, unless something else has set it
+// since: the repository's own setup step, say.
+export function uninstallManaged(cwd: string, env: NodeJS.ProcessEnv): string[] | undefined {
+  const dir = managedDir(cwd, env);
+  if (!existsSync(dir)) return undefined;
+  const done: string[] = [];
+  const current = configGet(["--local", "--path", "--get", "core.hooksPath"], cwd, env);
+  if (current !== undefined && existingRealpath(resolve(cwd, current)) === existingRealpath(dir)) {
+    const previous = configGet(["--local", "--get", RECORD], cwd, env);
+    if (previous === undefined) {
+      git(["config", "--local", "--unset", "core.hooksPath"], cwd, env);
+      done.push("core.hooksPath: unset in this clone, as it was");
+    } else {
+      git(["config", "--local", "core.hooksPath", previous], cwd, env);
+      done.push(`core.hooksPath: back to ${JSON.stringify(previous)}`);
+    }
+  } else done.push("core.hooksPath: left as it is; it no longer points at second-read's hooks");
+  spawnSync("git", ["config", "--local", "--remove-section", "second-read"], { cwd, env });
+  rmSync(dir, { recursive: true, force: true });
+  done.push(`removed ${dir}`);
+  return done;
+}
+
 // Runs the hook that was set aside at install, if there is one, with the same arguments and input.
 export function runPrevious(hookPath: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, input?: Buffer) {
   const previous = hookPath + PREVIOUS;
@@ -143,7 +244,9 @@ export function runPrevious(hookPath: string, args: string[], cwd: string, env: 
     stdio: [input === undefined ? "inherit" : "pipe", "inherit", "inherit"],
     ...(input === undefined ? {} : { input }),
   });
-  if (result.error) throw new GitError(`can't run ${previous}: ${result.error.message}`);
+  // A hook that exits without reading all its input isn't a failure; git doesn't treat it as one either.
+  const unread = (result.error as NodeJS.ErrnoException | undefined)?.code === "EPIPE" && result.status !== null;
+  if (result.error && !unread) throw new GitError(`can't run ${previous}: ${result.error.message}`);
   return exitStatus(result);
 }
 

@@ -20,11 +20,13 @@ import {
   hooksDir,
   hooksInWorkTree,
   installHooks,
+  installManaged,
   type Pushed,
   pushRange,
   readPushed,
   runPrevious,
   uninstallHooks,
+  uninstallManaged,
 } from "./git.ts";
 
 export interface Io {
@@ -166,17 +168,30 @@ function runHooks(io: Io, args: string[]): number {
   if ((action !== "install" && action !== "uninstall") || rest.length > 0) {
     throw new UsageError(`hooks takes "install" or "uninstall"`);
   }
+  const list = (done: string[]) => done.map((line) => `  ${line}\n`).join("");
+  if (action === "uninstall") {
+    const managed = uninstallManaged(io.cwd, io.env);
+    if (managed) {
+      io.out(`second-read: removed the hooks from this clone.\n${list(managed)}`);
+      return EXIT.clean;
+    }
+  }
   const dir = hooksDir(io.cwd, io.env);
+  // The installed hooks name paths on this machine, so they never go in a checked-in hooks folder.
   if (action === "install" && hooksInWorkTree(dir, io.cwd, io.env)) {
-    throw new Error(
-      `${dir} is inside the work tree (core.hooksPath), so the hooks would be files in the repository, ` +
-        `with paths on this machine in them. Nothing was installed. Point core.hooksPath at a folder outside ` +
-        `the work tree, copying in the repository's own hooks if you use them, or unset it, and install again.`,
+    const managed = installManaged(io.cwd, io.env, io.command);
+    io.out(
+      `second-read: ${managed.hooksPath} is in the work tree, so the hooks went into ${managed.dir}, and ` +
+        `core.hooksPath points there now, for this clone only (it was ${JSON.stringify(managed.hooksPath)}).\n` +
+        list(managed.done) +
+        `Running the repository's own setup step again, if it sets core.hooksPath, turns the guards off; ` +
+        `run "second-read hooks install" after it.\n`,
     );
+    return EXIT.clean;
   }
   if (action === "install") mkdirSync(dir, { recursive: true });
   const done = action === "install" ? installHooks(dir, io.command) : uninstallHooks(dir);
-  io.out(`second-read: ${dir}\n${done.map((line) => `  ${line}\n`).join("")}`);
+  io.out(`second-read: ${dir}\n${list(done)}`);
   return EXIT.clean;
 }
 
