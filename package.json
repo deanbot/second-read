@@ -1,6 +1,6 @@
 {
   "name": "second-read",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "A privacy check on agent-written commits, issues, PRs and comments, for any coding agent.",
   "license": "MIT",
   "type": "module",
