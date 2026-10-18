@@ -36,8 +36,8 @@ It isn't a secrets scanner. Tools like gitleaks find keys and tokens, and second
 ## Where it runs
 
 - **git hooks:** commit messages, and the lines a push adds.
-- **A `gh` shim:** the text of issues, pull requests, comments, releases, gists, labels and repository
-  descriptions, before the real `gh` sends it.
+- **A `gh` shim:** the text of issues, pull requests, comments, releases, gists, labels and repositories, and the
+  names they're given, before the real `gh` sends it.
 - **Agent adapters**, for posts that don't go through `git` or `gh`, such as a GitHub tool an agent calls directly.
   Claude Code comes first. Other agents follow, each written from its tool's own hook docs.
 - **A sweep** of what's already posted to a repository, edit histories included.
@@ -127,10 +127,11 @@ second-read shim install     # writes a gh shim, and says which folder to put ah
   `SECOND_READ_ALLOWLIST_REVIEWED="<id>"`. An id covers only that change, so a later one is refused again.
 - **The `gh` shim** checks `--title`, `--body`, `--body-file` and a body read from stdin, for `gh issue` and
   `gh pr` `create`, `edit` and `comment`, and `gh pr review`. It also checks the `--comment` that `close` and
-  `reopen` leave, and the `--subject` and body of `gh pr merge`'s merge commit. It checks a release's title and
-  notes, a gist's description and the files it uploads, stdin included, a label's name and description, and a
-  repository's description. Then it runs the real `gh` with the same arguments and input. Every other command,
-  `gh api` included, passes straight through.
+  `reopen` leave, and the `--subject` and body of `gh pr merge`'s merge commit. It checks a release's title,
+  notes and tag, a gist's description and the files it uploads, stdin included, with the name each is uploaded
+  under, a label's name and description, and a repository's name and description, on `gh repo rename` too. A name
+  is checked as a branch name is, and only the new one, so a leaked name can be renamed away. Then it runs the real
+  `gh` with the same arguments and input. Every other command, `gh api` included, passes straight through.
 
 Each guard refuses on a finding, and also when the check itself fails. A hook that was already in place is set aside
 and still runs after the check; `second-read hooks uninstall` removes only second-read's hooks and puts it back. The

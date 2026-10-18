@@ -22,7 +22,7 @@ import {
   USER_FILE_TEMPLATE,
 } from "./config.ts";
 import { bashPosts, firstUnknown, isGithubTool, mcpPosts, type Post } from "./claude.ts";
-import { findRealGh, isShim, parseGh, postTexts, shimScript } from "./gh.ts";
+import { findRealGh, isShim, parseGh, postNames, postTexts, shimScript } from "./gh.ts";
 import {
   type AllowlistChange,
   allowlistChanges,
@@ -410,9 +410,10 @@ async function runShim(io: Io, args: string[]): Promise<number> {
     if (post.bodyFiles.includes("-") && !(post.stdinIfPiped && io.stdinIsTTY)) input = await io.readStdin();
     const stdin = input?.toString("utf8") ?? "";
     const texts = postTexts(post, (file) => (file === "-" ? stdin : readFileSync(resolve(io.cwd, file), "utf8")));
-    const sections = texts
-      .map(([where, text]) => ({ where, findings: check(text, { identity, rules, kind: post.kind }) }))
-      .filter((s) => s.findings.length > 0);
+    const sections = [
+      ...postNames(post).map(([where, name]) => ({ where, findings: checkName(name, identity, rules) })),
+      ...texts.map(([where, text]) => ({ where, findings: check(text, { identity, rules, kind: post.kind }) })),
+    ].filter((s) => s.findings.length > 0);
     if (sections.length > 0) {
       io.err(report(sections, FIX_TEXT));
       return EXIT.findings;
@@ -479,6 +480,7 @@ function claudeRefusal(io: Io, call: unknown): string | undefined {
       const { identity, rules: merged, exemptFiles } = rules.get(post.cwd)!;
       const exempt = post.file !== undefined && exemptMatcher(exemptFiles)(post.file);
       const options = { identity, rules: merged, kind: post.kind };
+      if (post.name) return { where: post.where, findings: checkName(post.text, identity, merged) };
       return { where: post.where, findings: exempt ? checkTerms(post.text, options) : check(post.text, options) };
     })
     .filter((s) => s.findings.length > 0);

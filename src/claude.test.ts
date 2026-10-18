@@ -29,10 +29,12 @@ test("bashPosts reads gh issue and pr posts as the shim does", () => {
 
 test("bashPosts reads gh release, gist, label and repo posts as the shim does", () => {
   assert.deepEqual(texts(`gh release create v1 -t "Version 1" --notes-file - <<'EOF'\nNotes.\nEOF`), [
+    ["the tag of this release", "v1"],
     ["the title of this release", "Version 1"],
     ["the notes of this release", "Notes.\n"],
   ]);
   assert.deepEqual(texts(`gh gist create sub/body.md --desc "A gist"`), [
+    ["the file name of this gist", "body.md"],
     ["the description of this gist", "A gist"],
     ["the contents of this gist, from sub/body.md", "From a file.\n"],
   ]);
@@ -47,6 +49,23 @@ test("bashPosts reads gh release, gist, label and repo posts as the shim does", 
     ["the description of this label", "Something's broken"],
   ]);
   assert.deepEqual(texts(`gh repo edit --description "A tool"`), [["the description of this repository", "A tool"]]);
+});
+
+test("bashPosts reads the names a gh post gives, marked to be checked as names", () => {
+  const names = (command: string) =>
+    bashPosts(command, repo, home).map((p) => [p.where, p.text, p.name ?? false]);
+  assert.deepEqual(names(`gh repo create -d "A tool" example/repo`), [
+    ["the name of this repository", "example/repo", true],
+    ["the description of this repository", "A tool", false],
+  ]);
+  assert.deepEqual(names(`gh release create v1 -dt "Version 1"`), [
+    ["the tag of this release", "v1", true],
+    ["the title of this release", "Version 1", false],
+  ]);
+  assert.deepEqual(names(`gh gist create sub/body.md`), [
+    ["the file name of this gist", "body.md", true],
+    ["the contents of this gist, from sub/body.md", "From a file.\n", false],
+  ]);
 });
 
 test("bashPosts reads a body file from the folder the command runs in", () => {

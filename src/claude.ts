@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { KIND_NAMES, type Kind } from "./checks.ts";
-import { parseGh, postTexts } from "./gh.ts";
+import { parseGh, postNames, postTexts } from "./gh.ts";
 import { output, parseShell, type Stdin, UNKNOWN, UNKNOWN_END, unknown } from "./shell.ts";
 
 export interface Post {
@@ -15,6 +15,8 @@ export interface Post {
   cwd: string;
   // For a file's contents, its path in the repository, which may be exempt.
   file?: string;
+  // A name the post gives, such as a repository's, checked as a branch name is.
+  name?: boolean;
 }
 
 // The texts each command in a Bash tool call would post, read against the folder each one runs in.
@@ -149,7 +151,10 @@ function ghPosts(args: string[], stdin: Stdin | undefined, dir: string, written:
   if (args[0] === "api") return ghApiPosts(args.slice(1), reader(stdin, dir, written), dir);
   const post = parseGh(args);
   if (!post) return [];
-  return postTexts(post, reader(stdin, dir, written)).map(([where, text]) => ({ where, kind: post.kind, text, cwd: dir }));
+  return [
+    ...postNames(post).map(([where, text]) => ({ where, kind: post.kind, text, cwd: dir, name: true })),
+    ...postTexts(post, reader(stdin, dir, written)).map(([where, text]) => ({ where, kind: post.kind, text, cwd: dir })),
+  ];
 }
 
 const GH_API_VALUE_FLAGS = new Set(["-X", "--method", "-f", "--raw-field", "-F", "--field", "-H", "--header", "-q",
