@@ -145,6 +145,10 @@ test("the user's own address is found whatever a repository allows", () => {
   assert.deepEqual(found("Mail someone.example@mail-example.co.uk or other@mail-example.co.uk", repo, who), [
     ["your email", "someone.example@mail-example.co.uk"],
   ]);
+  // An address no list allows is reported as the user's own.
+  assert.deepEqual(found("Mail work@mail-example.co", {}, { ...identity, emails: ["work@mail-example.co"] }), [
+    ["your email", "work@mail-example.co"],
+  ]);
   // The default allowlist takes in example.com, but not the user's own address there.
   assert.deepEqual(found("Mail work@example.com or other@example.com", {}, who), [["your email", "work@example.com"]]);
   assert.deepEqual(found("ＷＯＲＫ＠example.com and wo​rk@example.com", {}, who), [
