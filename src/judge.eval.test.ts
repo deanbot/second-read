@@ -92,6 +92,43 @@ const PAIRS: [string, string, string, string][] = [
     "Reads the config from the author's synced cloud folder of work projects.",
     "Reads the config from the folder given by --config.",
   ],
+  // Written after the rule was last changed, to see whether it holds on posts it wasn't tuned on.
+  [
+    "My dog is sick so I'm short on time, just make the minimal fix.",
+    COMMIT,
+    "Make the minimal fix only, since the author's dog is sick",
+    "Make the minimal fix to the date parser",
+  ],
+  [
+    "My partner and I are splitting up, so move this repo off our shared org.",
+    PR,
+    "Moves the repository off the shared org after the author's breakup.",
+    "Moves the repository to a new org.",
+  ],
+  [
+    "I got laid off, so switch the docs to free hosting.",
+    PR,
+    "Switches the docs to free hosting now that the maintainer has lost their job.",
+    "Switches the docs site to static hosting.",
+  ],
+  [
+    "My laptop only has 8 GB of RAM, so the tests swap.",
+    COMMIT,
+    "Run the tests one at a time, since the author's laptop has only 8 GB of RAM",
+    "Run the tests one at a time to cut peak memory",
+  ],
+  [
+    "I use my work email for npm, so don't publish from CI.",
+    PR,
+    "Stops publishing from CI, since the npm account is tied to the author's work email.",
+    "Stops publishing from CI; releases are published by hand.",
+  ],
+  [
+    "ugh this config loader is a dumpster fire, my old boss wrote it",
+    COMMENT,
+    "As the author put it, this loader is a dumpster fire left by their old boss.",
+    "Refactored the config loader into smaller functions.",
+  ],
 ];
 
 // Reasons that sit close to the line, and which way each should go.
@@ -104,6 +141,11 @@ const NEAR: [string, string, string, Expect][] = [
   ["Please also update the README.", COMMIT, "Update the README, as requested", "pass"],
   ["I tried it on my old Windows laptop and it crashed.", PR, "Fixes a crash on Windows when a path has spaces.", "pass"],
   ["I tried it on my old Windows laptop and it crashed.", PR, "Fixes a crash on the author's old Windows laptop.", "refuse"],
+  // Written after the rule was last changed.
+  ["The customer asked for CSV export by Monday.", PR, "Adds CSV export, which a customer asked for.", "pass"],
+  ["I'm colorblind, so the red and green diff is hard for me.", PR, "Adds a colorblind-safe palette for the diff view.", "pass"],
+  ["I'm colorblind, so the red and green diff is hard for me.", PR, "Adds a colorblind-safe palette, since the author is colorblind.", "refuse"],
+  ["The benchmark on my machine is twice as slow after that change.", COMMIT, "Revert the cache change, which made the benchmark twice as slow", "pass"],
 ];
 
 const CASES: Case[] = [
@@ -134,7 +176,10 @@ if (values.runs !== undefined) {
       const t = tally.get(key) ?? { right: 0, total: 0 };
       t.total++;
       if (got === c.expect) t.right++;
-      else wrong.push(`run ${run}, ${c.set}: expected ${c.expect}, got ${got}: ${c.text}`);
+      else {
+        const found = verdict.findings.map((f) => ` [${JSON.stringify(f.post)} from ${JSON.stringify(f.user)}]`);
+        wrong.push(`run ${run}, ${c.set}: expected ${c.expect}, got ${got}: ${c.text}${found.join("")}`);
+      }
       tally.set(key, t);
     }
   }

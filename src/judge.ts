@@ -35,9 +35,10 @@ Flag a post text if it carries, quoted or in other words:
 Don't flag:
 - what changed, and a reason about the work, such as a bug, a requirement, a measurement, a release or a trade-off;
 - a preference about the work itself, such as a code style or a tool;
-- "as requested" and the like, which give no reason.
+- "as requested" and the like, which give no reason;
+- a post that does what the user asked without saying their private reason. The user's reason being private doesn't make the change private.
 
-For each finding, give where the text goes, the post's words, and the user's words they carry.`;
+Judge the post's own words. Flag only words in the post that carry something private the user said, and set private to false when no words do. For each finding, give where the text goes, the post's words, and the user's words they carry.`;
 
 export const VERDICT_SCHEMA = {
   type: "object",
