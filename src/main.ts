@@ -262,7 +262,8 @@ function allowlistReport(changes: AllowlistChange[]): string {
   return (
     `second-read: this push changes the repository's allowlist, which decides what the check lets through.\n` +
     rows.join("") +
-    `Read each change with git show. If it's meant, push again with ${ALLOWLIST_REVIEWED}="${ids}"; ` +
+    `A person should read each change (git show <commit> -- <file>) before it's pushed. ` +
+    `If it's meant, push again with ${ALLOWLIST_REVIEWED}="${ids}"; ` +
     `it covers only these changes.\n`
   );
 }

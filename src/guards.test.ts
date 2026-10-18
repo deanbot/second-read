@@ -638,6 +638,55 @@ test("pre-push sees an allowlist in a subfolder, a change that only removes line
   assert.equal(pushed.status, 0, pushed.stderr);
 });
 
+test("pre-push refuses a merge whose resolution writes a new allowlist, but not one that takes a side's", () => {
+  const dir = installed();
+  bareRemote(dir);
+  const file = join(dir, ".second-read.toml");
+  assert.equal(commit(dir, "Start (#7)", { ".second-read.toml": "allowed_paths = []\n" }).status, 0);
+  assert.equal(pushReviewed(dir, blob(dir, "HEAD:.second-read.toml"), "origin", "main").status, 0);
+  git(dir, "switch", "-q", "-c", "side");
+  writeFileSync(file, 'allowed_paths = ["~/.config/one"]\n');
+  git(dir, "commit", "-q", "-a", "--no-verify", "-m", "Side (#7)");
+  git(dir, "switch", "-q", "main");
+  writeFileSync(file, 'allowed_paths = ["~/.config/two"]\n');
+  git(dir, "commit", "-q", "-a", "--no-verify", "-m", "Main (#7)");
+  // Each side's version is reviewed and pushed.
+  const sides = `${blob(dir, "main:.second-read.toml")} ${blob(dir, "side:.second-read.toml")}`;
+  assert.equal(pushReviewed(dir, sides, "origin", "main", "side").status, 0);
+
+  assert.notEqual(run("git", ["merge", "-q", "side"], dir).status, 0);
+  writeFileSync(file, 'allowed_paths = ["~/.config/one", "~/.config/two", "~/.config/three"]\n');
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "--no-verify", "--no-edit");
+  const id = blob(dir, "HEAD:.second-read.toml");
+  const refused = pushReviewed(dir, sides, "origin", "main");
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, new RegExp(`commit ${head(dir)} changes \\.second-read\\.toml, blob ${id}\\n`));
+  assert.equal(pushReviewed(dir, id, "origin", "main").status, 0);
+
+  // A merge that takes one side's version unchanged brings nothing new to read.
+  git(dir, "reset", "-q", "--hard", "HEAD~1");
+  git(dir, "switch", "-q", "-c", "other");
+  assert.notEqual(run("git", ["merge", "-q", "side"], dir).status, 0);
+  git(dir, "checkout", "-q", "--theirs", ".second-read.toml");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "--no-verify", "--no-edit");
+  const pushed = push(dir, "origin", "other");
+  assert.equal(pushed.status, 0, pushed.stderr);
+});
+
+test("pre-push names a file with a space in it as it is", () => {
+  const dir = installed();
+  bareRemote(dir);
+  mkdirSync(join(dir, "sub dir"));
+  writeFileSync(join(dir, "sub dir", "notes.txt"), `${TERM}\n`);
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "--no-verify", "-m", "Notes (#7)");
+  const refused = push(dir, "origin", "main");
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /adds to sub dir\/notes\.txt\. /);
+});
+
 test("a blanket entry in the repository's allowlist fails the check", () => {
   const dir = installed();
   writeFileSync(join(dir, ".second-read.toml"), 'allowed_paths = ["~"]\n');
