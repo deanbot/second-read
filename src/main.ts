@@ -219,7 +219,7 @@ async function runHook(io: Io, args: string[]): Promise<number> {
   let input: Buffer | undefined;
   let sections: Section[];
   let changes: AllowlistChange[] = [];
-  const found = { commits: 0, tags: 0, names: [] as PushedRef[] };
+  const found = { commits: 0, tags: new Set<string>(), names: [] as PushedRef[] };
   if ((name as HookName) === "commit-msg") {
     const file = gitArgs[0];
     if (file === undefined) throw new Error("commit-msg was given no message file");
@@ -242,18 +242,21 @@ async function runHook(io: Io, args: string[]): Promise<number> {
         const findings = check(pushed.commit, { identity, rules, kind: "commit" });
         if (findings.length > 0) {
           sections.push({ where: `the name written in tag ${pushed.commit}`, findings });
-          found.tags++;
+          found.tags.add(pushed.commit);
         }
       }
       const findings = checkPushed(pushed, identity, rules);
       if (findings.length === 0) return;
       sections.push({ where: pushedWhere(pushed), findings });
-      found[pushed.kind === "tag" ? "tags" : "commits"]++;
+      if (pushed.kind === "tag") found.tags.add(pushed.commit);
+      else found.commits++;
     });
     changes = unreviewed(allowlistChanges(range, gitArgs[0] ?? "", io.cwd, io.env), io.env[ALLOWLIST_REVIEWED]);
   }
   sections = sections.filter((s) => s.findings.length > 0);
-  if (sections.length > 0) io.err(report(sections, name === "commit-msg" ? FIX_TEXT : pushFix(found)));
+  if (sections.length > 0) {
+    io.err(report(sections, name === "commit-msg" ? FIX_TEXT : pushFix({ ...found, tags: found.tags.size })));
+  }
   if (changes.length > 0) io.err(allowlistReport(changes));
   if (sections.length > 0 || changes.length > 0) return EXIT.findings;
   return runPrevious(resolve(io.cwd, hookPath), gitArgs, io.cwd, io.env, input);

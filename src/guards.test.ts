@@ -589,6 +589,12 @@ test("pre-push checks the name written in an annotated tag, whatever the remote 
   const same = push(dir, "origin", TERM);
   assert.equal(same.status, 1);
   assert.match(same.stderr, new RegExp(`1 finding in the name of tag ${TERM}\\.`));
+
+  // Its name and its message are one tag to fix.
+  git(dir, "tag", "-f", "-a", TERM, "-m", `Ported from ${TERM}`);
+  const twice = push(dir, "origin", `refs/tags/${TERM}:refs/tags/v1`);
+  assert.equal(twice.status, 1);
+  assert.match(twice.stderr, /2 findings\. .*fix the tag with git tag -f -a, and push again\./);
 });
 
 test("pre-push passes git's input on to the hook it set aside", () => {
