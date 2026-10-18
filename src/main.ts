@@ -219,7 +219,7 @@ async function runHook(io: Io, args: string[]): Promise<number> {
   let input: Buffer | undefined;
   let sections: Section[];
   let changes: AllowlistChange[] = [];
-  const found = { commits: 0, tags: new Set<string>(), names: [] as PushedRef[] };
+  const found: PushFound = { commits: 0, tags: new Set(), tagNames: new Set(), names: [] };
   if ((name as HookName) === "commit-msg") {
     const file = gitArgs[0];
     if (file === undefined) throw new Error("commit-msg was given no message file");
@@ -230,19 +230,26 @@ async function runHook(io: Io, args: string[]): Promise<number> {
     const range = pushRange(input.toString("utf8"), io.cwd, io.env);
     sections = [];
     for (const ref of range.refs) {
-      const findings = check(ref.name, { identity, rules, kind: "commit" });
+      const findings = checkName(ref.name, identity, rules);
       if (findings.length === 0) continue;
       sections.push({ where: `the name of ${ref.kind} ${ref.name}`, findings });
       found.names.push(ref);
     }
-    const tagNames = new Set(range.refs.filter((r) => r.kind === "tag").map((r) => r.name));
+    const tagRefs = new Set(range.refs.filter((r) => r.kind === "tag").map((r) => r.name));
     await readPushed(range, gitArgs[0] ?? "", io.cwd, io.env, (pushed) => {
-      // An annotated tag holds its own name, which goes with it whatever the ref is called.
-      if (pushed.kind === "tag" && !tagNames.has(pushed.commit)) {
-        const findings = check(pushed.commit, { identity, rules, kind: "commit" });
+      // An annotated tag holds its own name, which goes with it whatever the ref is called. Either way the fix is
+      // a new tag: rewriting it with git tag -f keeps the name.
+      if (pushed.kind === "tag" && tagRefs.has(pushed.commit)) {
+        const flagged = found.names.findIndex((r) => r.kind === "tag" && r.name === pushed.commit);
+        if (flagged >= 0) {
+          found.names.splice(flagged, 1);
+          found.tagNames.add(pushed.commit);
+        }
+      } else if (pushed.kind === "tag") {
+        const findings = checkName(pushed.commit, identity, rules);
         if (findings.length > 0) {
           sections.push({ where: `the name written in tag ${pushed.commit}`, findings });
-          found.tags.add(pushed.commit);
+          found.tagNames.add(pushed.commit);
         }
       }
       const findings = checkPushed(pushed, identity, rules);
@@ -255,7 +262,7 @@ async function runHook(io: Io, args: string[]): Promise<number> {
   }
   sections = sections.filter((s) => s.findings.length > 0);
   if (sections.length > 0) {
-    io.err(report(sections, name === "commit-msg" ? FIX_TEXT : pushFix({ ...found, tags: found.tags.size })));
+    io.err(report(sections, name === "commit-msg" ? FIX_TEXT : pushFix(found)));
   }
   if (changes.length > 0) io.err(allowlistReport(changes));
   if (sections.length > 0 || changes.length > 0) return EXIT.findings;
@@ -287,20 +294,51 @@ function allowlistReport(changes: AllowlistChange[]): string {
   );
 }
 
-function pushFix({ commits, tags, names }: { commits: number; tags: number; names: PushedRef[] }): string {
+interface PushFound {
+  commits: number;
+  // Annotated tags whose messages have findings.
+  tags: Set<string>;
+  // Annotated tags whose own names have findings.
+  tagNames: Set<string>;
+  // Refs whose names on the remote have findings, but for the annotated tags above.
+  names: PushedRef[];
+}
+
+function pushFix(found: PushFound): string {
+  // A tag that needs a new name gets a new message along with it.
+  const tags = [...found.tags].filter((t) => !found.tagNames.has(t)).length;
   const tag = `the ${tags === 1 ? "tag" : "tags"} with git tag -f -a`;
-  let fix = "";
-  if (commits > 0 && tags > 0) fix = `fix the commits, and ${tag}`;
-  else if (commits > 0) fix = "fix the commits";
-  else if (tags > 0) fix = `fix ${tag}`;
-  if (names.length > 0) {
-    const kinds = new Set(names.map((r) => r.kind));
-    const kind = kinds.size === 1 ? [...kinds][0]! : "ref";
-    const noun = `the ${names.length === 1 ? kind : kind === "branch" ? "branches" : kind + "s"}`;
-    const rename = `push ${noun} under a new name (git branch -m, or a new tag)`;
-    return fix === "" ? `${rename}, and push again` : `${fix}, ${rename}, and push again`;
+  const fixes: string[] = [];
+  if (found.commits > 0) fixes.push(tags > 0 ? `fix the commits, and ${tag}` : "fix the commits");
+  else if (tags > 0) fixes.push(`fix ${tag}`);
+  if (found.tagNames.size > 0) {
+    const noun = found.tagNames.size === 1 ? "the tag" : "the tags";
+    fixes.push(`move ${noun} to a clean name (git tag -a <new name> <commit>, then git tag -d <old name>)`);
   }
-  return commits > 0 && tags === 0 ? `${fix} and push again` : `${fix}, and push again`;
+  if (found.names.length > 0) {
+    const kinds = new Set(found.names.map((r) => r.kind));
+    const kind = kinds.size === 1 ? [...kinds][0]! : "ref";
+    const noun = found.names.length === 1 ? kind : kind === "branch" ? "branches" : `${kind}s`;
+    const how: string[] = [];
+    if (kinds.has("branch")) how.push("git branch -m");
+    if (kinds.has("tag")) how.push("git tag <new name> <old name>");
+    fixes.push(`push the ${noun} under a new name${how.length > 0 ? ` (${how.join(", or ")})` : ""}`);
+  }
+  if (fixes.length === 1 && fixes[0] === "fix the commits") return "fix the commits and push again";
+  return `${fixes.join(", ")}, and push again`;
+}
+
+// A ref name joins its words with - _ / or . where a message has spaces, and a money phrase of more than one word
+// matches only across spaces. So the name is checked again with those read as spaces, which keeps every column
+// where it was. Only money comes from that pass: an email or a path in the name has to be read as it is.
+function checkName(name: string, identity: Identity, rules: Rules): Finding[] {
+  const findings = check(name, { identity, rules, kind: "commit" });
+  const spaced = check(name.replace(/[-_/.]/g, " "), { identity, rules, kind: "commit" }).filter(
+    (f) => f.category === "money" && !findings.some((g) => f.start < g.end && g.start < f.end),
+  );
+  if (spaced.length === 0) return findings;
+  const quoted = spaced.map((f) => ({ ...f, text: name.slice(f.start, f.end) }));
+  return [...findings, ...quoted].sort((a, b) => a.start - b.start);
 }
 
 function checkPushed(pushed: Pushed, identity: Identity, rules: Rules): Finding[] {
