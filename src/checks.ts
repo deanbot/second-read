@@ -196,6 +196,22 @@ export function check(input: string, options: CheckOptions): Finding[] {
   return toFindings(input, outermost(shown));
 }
 
+// An allowed path that takes in the whole home folder or a whole temp folder, which leaves that check nothing to do:
+// "~" in any spelling, a temp folder's root, or a folder above one, such as "/var".
+export function isBlanketPath(path: string): boolean {
+  const allowed = [canonicalPath(path)];
+  return ["~", ...TEMP_FOLDERS].some((root) => isAllowedPath(root, allowed));
+}
+
+// An allowed email pattern with no fixed domain: "*@*", "someone@*", "*@*.com". The domain must be written out,
+// or be "*." and then one with a dot in it, as in "*@*.example.org". A pattern with no "@" matches no email.
+export function isBlanketEmail(glob: string): boolean {
+  const at = glob.lastIndexOf("@");
+  if (at < 0) return false;
+  const domain = glob.slice(at + 1);
+  return domain.includes("*") && !/^\*\.[^*.]+(?:\.[^*.]+)+$/.test(domain);
+}
+
 function homePrefixes(identity: Identity): Set<string> {
   const prefixes = new Set<string>();
   const home = trimSlash(identity.home);

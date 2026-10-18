@@ -103,3 +103,28 @@ test("rules join both allowlists and take terms from the user only", () => {
     allowedPaths: ["c", "f"],
   });
 });
+
+test("a repository file that allows a whole home or temp folder is an error", () => {
+  const home = ["~", "~/", "$HOME", "${HOME}", "%USERPROFILE%\\"];
+  for (const entry of [...home, "/tmp", "/tmp/", "/var/folders", "/var", "/private", ""]) {
+    const path = write("repo-d/.second-read.toml", `allowed_paths = [${JSON.stringify(entry)}]\n`);
+    assert.throws(() => loadRepoConfig(path, []), /allowed_paths entry .* takes in the whole home folder/, entry);
+  }
+  const path = write("repo-d/.second-read.toml", 'allowed_paths = ["~/.config/some-tool", "/tmp/example-tool"]\n');
+  assert.deepEqual(loadRepoConfig(path, []).allowedPaths, ["~/.config/some-tool", "/tmp/example-tool"]);
+});
+
+test("a repository file with an email pattern that has no fixed domain is an error", () => {
+  for (const entry of ["*@*", "someone@*", "*@*.com", "*@example.*", "*@*example.com", "*@*.*"]) {
+    const path = write("repo-e/.second-read.toml", `allowed_emails = [${JSON.stringify(entry)}]\n`);
+    assert.throws(() => loadRepoConfig(path, []), /allowed_emails entry .* has no fixed domain/, entry);
+  }
+  const allowed = ["*@example.com", "someone@example.org", "*@*.example.org", "*@*.example.co.uk"];
+  const path = write("repo-e/.second-read.toml", `allowed_emails = ${JSON.stringify(allowed)}\n`);
+  assert.deepEqual(loadRepoConfig(path, []).allowedEmails, allowed);
+});
+
+test("the user's own file can allow anything, since it never leaves the machine", () => {
+  const path = write("user-blanket/config.toml", 'allowed_paths = ["~", "/tmp"]\nallowed_emails = ["*@*"]\n');
+  assert.deepEqual(loadUserConfig(path).allowedEmails, ["*@*"]);
+});
