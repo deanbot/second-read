@@ -7,23 +7,34 @@ export const UNKNOWN_END = "\u{E001}";
 
 export type Stdin = { text: string } | { file: string };
 
+// A file a command's output goes to, by redirection.
+export interface Write {
+  file: string;
+  append: boolean;
+}
+
 export interface SimpleCommand {
   words: string[];
   // A heredoc, a here-string, a file, or the output of the command before it in a pipe.
   stdin?: Stdin;
+  writes?: Write[];
 }
 
-// Commands in the order they'd run, with subshells, lists and pipes flattened. A keyword such as `if` or `do` in
-// front of a command is dropped.
+// Commands in the order they'd run, with subshells, lists and pipes flattened, and the commands inside $(…) and
+// backticks ahead of the one they're in. A keyword such as `if` or `do` in front of a command is dropped.
 export function parseShell(source: string): SimpleCommand[] {
-  return new Parser(source).list(false).map(({ words, stdin }) => (stdin ? { words, stdin } : { words }));
+  return new Parser(source).list(false).map(({ words, stdin, writes }) => ({
+    words,
+    ...(stdin ? { stdin } : {}),
+    ...(writes ? { writes } : {}),
+  }));
 }
 
-// The text a command prints, when it's one that only prints what it's given: cat of its stdin, echo, or printf
-// with a plain format.
+// The text a command prints, when it's one that only prints what it's given: cat or tee of its stdin, echo, or
+// printf with a plain format.
 export function output(command: SimpleCommand): string | undefined {
   const [name, ...args] = command.words;
-  if (name === "cat" && (args.length === 0 || (args.length === 1 && args[0] === "-"))) {
+  if ((name === "cat" && args.every((a) => a === "-")) || name === "tee") {
     return command.stdin && "text" in command.stdin ? command.stdin.text : undefined;
   }
   if (name === "echo") {
@@ -59,6 +70,7 @@ const REDIRECT = /^(\d*)(<<<|<<-|<<|<>|<&|<|>>|>&|>\||>|&>>|&>)/;
 interface Draft {
   words: string[];
   stdin?: Stdin;
+  writes?: Write[];
   pipedFrom?: Draft;
 }
 
@@ -72,6 +84,8 @@ interface Heredoc {
 class Parser {
   private i = 0;
   private pending: Heredoc[] = [];
+  // The commands of substitutions read since the last command ended, which run ahead of the next.
+  private substituted: Draft[] = [];
   private readonly s: string;
 
   constructor(source: string) {
@@ -84,6 +98,7 @@ class Parser {
     const out: Draft[] = [];
     let current: Draft = { words: [] };
     const finish = () => {
+      out.push(...this.substituted.splice(0));
       const words = current.words;
       while (words.length > 0 && LEADING_KEYWORDS.has(words[0]!)) words.shift();
       if (words.every((w) => CLOSING_KEYWORDS.has(w))) words.length = 0;
@@ -153,6 +168,10 @@ class Parser {
       current.stdin = { text: target.text + "\n" };
     } else if (op === "<" && (fd === "" || fd === "0")) {
       current.stdin = { file: target.text };
+    } else if ((op === ">" || op === ">|" || op === ">>") && (fd === "" || fd === "1")) {
+      (current.writes ??= []).push({ file: target.text, append: op === ">>" });
+    } else if (op === "&>" || op === "&>>") {
+      (current.writes ??= []).push({ file: target.text, append: op === "&>>" });
     }
   }
 
@@ -171,7 +190,13 @@ class Parser {
         lines.push(line + "\n");
       }
       const body = lines.join("");
-      heredoc.draft.stdin = { text: heredoc.quoted ? body : new Parser(body).doubleQuoted(true) };
+      if (heredoc.quoted) {
+        heredoc.draft.stdin = { text: body };
+      } else {
+        const expanded = new Parser(body);
+        heredoc.draft.stdin = { text: expanded.doubleQuoted(true) };
+        this.substituted.push(...expanded.substituted);
+      }
     }
     this.pending = [];
   }
@@ -257,7 +282,7 @@ class Parser {
     }
     if (next === "(") {
       this.i += 2;
-      const inner = this.list(true);
+      const inner = this.inner(() => this.list(true));
       if (s[this.i] === ")") this.i++;
       const text = inner.length === 1 ? output(inner[0]!) : undefined;
       return text === undefined ? unknown(s.slice(start, this.i)) : text.replace(/\n+$/, "");
@@ -284,22 +309,36 @@ class Parser {
     return "$";
   }
 
+  // `…`, whose command is read with the backslashes before $, ` and \ taken out.
   private backtick(): string {
     const s = this.s;
     const start = this.i;
+    let source = "";
     for (this.i++; this.i < s.length && s[this.i] !== "`"; this.i++) {
-      if (s[this.i] === "\\") this.i++;
+      if (s[this.i] === "\\" && "$`\\".includes(s[this.i + 1] ?? "")) this.i++;
+      source += s[this.i] ?? "";
     }
     this.i++;
+    this.inner(() => new Parser(source).list(false));
     return unknown(s.slice(start, this.i));
   }
 
   private processSubstitution(): string {
     const start = this.i;
     this.i += 2;
-    this.list(true);
+    this.inner(() => this.list(true));
     this.i++;
     return unknown(this.s.slice(start, this.i));
+  }
+
+  // The commands a substitution runs, kept to run ahead of the command it's in.
+  private inner(read: () => Draft[]): Draft[] {
+    const outer = this.substituted;
+    this.substituted = [];
+    const commands = read();
+    this.substituted = outer;
+    outer.push(...commands);
+    return commands;
   }
 
   // From an opening "(" past the ")" that closes it.

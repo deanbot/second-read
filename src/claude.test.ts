@@ -72,6 +72,29 @@ test("bashPosts finds posts behind wrappers, assignments and sh -c", () => {
   assert.equal(texts(`/opt/example/bin/gh pr comment 1 -b "By path"`)[0]?.[1], "By path");
 });
 
+test("bashPosts reads the posts inside command substitutions", () => {
+  assert.deepEqual(texts(`PR_URL=$(gh pr create -t T -b "Captured") && echo "$PR_URL"`), [
+    ["the title of this pull request", "T"],
+    ["the body of this pull request", "Captured"],
+  ]);
+  assert.deepEqual(texts("echo `git commit -m 'In backticks'`"), [["this commit message", "In backticks"]]);
+});
+
+test("bashPosts reads a file the command writes before it posts, not what's on disk", () => {
+  writeFileSync(join(repo, "stale.md"), "An older text.\n");
+  assert.deepEqual(texts(`cat > stale.md <<'EOF'\nThe new text.\nEOF\ngh pr comment 5 --body-file stale.md`), [
+    ["the body of this comment, from stale.md", "The new text.\n"],
+  ]);
+  assert.deepEqual(texts(`echo "Not yet on disk" > new.md && git commit -F new.md`), [
+    ["this commit message, from new.md", "Not yet on disk\n"],
+  ]);
+  assert.deepEqual(texts(`printf '%s' "Teed" | tee out.json > /dev/null; gh api repos/example/repo/issues --input out.json`), [
+    ["the body of gh api repos/example/repo/issues, from out.json", "Teed"],
+  ]);
+  assert.ok(texts(`./generate > stale.md && gh pr comment 5 -F stale.md`)[0]?.[1]?.includes(UNKNOWN));
+  assert.ok(texts(`echo more >> stale.md && gh pr comment 5 -F stale.md`)[0]?.[1]?.includes(UNKNOWN));
+});
+
 test("bashPosts marks text and files the shell fills in", () => {
   assert.ok(texts(`gh pr comment 1 --body "$BODY"`)[0]?.[1]?.includes(UNKNOWN));
   assert.ok(texts(`gh pr comment 1 --body-file "$FILE"`)[0]?.[1]?.includes(UNKNOWN));

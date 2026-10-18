@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { KIND_NAMES, type Kind } from "./checks.ts";
 import { parseGh, postTexts } from "./gh.ts";
-import { parseShell, type Stdin, UNKNOWN, UNKNOWN_END } from "./shell.ts";
+import { output, parseShell, type Stdin, UNKNOWN, UNKNOWN_END, unknown } from "./shell.ts";
 
 export interface Post {
   where: string;
@@ -19,25 +19,45 @@ export interface Post {
 
 // The texts each command in a Bash tool call would post, read against the folder each one runs in.
 export function bashPosts(command: string, cwd: string, home: string): Post[] {
+  return scriptPosts(command, cwd, home, new Map());
+}
+
+// The hook runs before the command does, so a file the command writes on its way to posting it is read from the
+// command, never from disk, where it may not exist yet or may hold an older text.
+type Written = Map<string, string>;
+
+function scriptPosts(script: string, cwd: string, home: string, written: Written): Post[] {
   const posts: Post[] = [];
   let dir = cwd;
-  for (const { words: all, stdin } of parseShell(command)) {
-    const words = unwrap(all);
+  for (const command of parseShell(script)) {
+    const words = unwrap(command.words);
     const name = basename(words[0] ?? "").replace(/\.exe$/i, "");
     const args = words.slice(1);
+    const { stdin } = command;
     if (name === "cd" || name === "pushd") {
       const target = args.find((a) => !a.startsWith("-") || a === "-");
       if (target === undefined) dir = home;
       else if (target !== "-" && !target.includes(UNKNOWN)) dir = resolve(dir, target.replace(/^~(?=\/|$)/, home));
     } else if (/^(ba|z|da|k)?sh$/.test(name) && args[0] === "-c" && args[1] !== undefined) {
-      if (!args[1].includes(UNKNOWN)) posts.push(...bashPosts(args[1], dir, home));
+      if (!args[1].includes(UNKNOWN)) posts.push(...scriptPosts(args[1], dir, home, written));
     } else if (name === "eval") {
       const script = args.join(" ");
-      if (!script.includes(UNKNOWN)) posts.push(...bashPosts(script, dir, home));
+      if (!script.includes(UNKNOWN)) posts.push(...scriptPosts(script, dir, home, written));
     } else if (name === "gh") {
-      posts.push(...ghPosts(args, stdin, dir));
+      posts.push(...ghPosts(args, stdin, dir, written));
     } else if (name === "git") {
-      posts.push(...gitPosts(args, stdin, dir));
+      posts.push(...gitPosts(args, stdin, dir, written));
+    }
+    const printed = output({ ...command, words });
+    const files = (command.writes ?? []).map((w) => ({ ...w, by: "this command" }));
+    if (name === "tee") {
+      const append = args.some((a) => /^-[^-]*a/.test(a) || a === "--append");
+      for (const file of args.filter((a) => !a.startsWith("-"))) files.push({ file, append, by: "tee" });
+    }
+    for (const { file, append } of files) {
+      if (file.includes(UNKNOWN)) continue;
+      const path = resolve(dir, file);
+      written.set(path, printed !== undefined && !append ? printed : unknown(`what ${words.join(" ")} writes to ${file}`));
     }
   }
   return posts;
@@ -63,20 +83,24 @@ function unwrap(words: string[]): string[] {
 }
 
 // A file's text, or stdin's for "-". A name the shell fills in is kept as the text, so it's refused unread.
-function reader(stdin: Stdin | undefined, dir: string): (file: string) => string {
-  return (file) => {
+function reader(stdin: Stdin | undefined, dir: string, written: Written): (file: string) => string {
+  const load = (file: string) => {
     if (file.includes(UNKNOWN)) return file;
-    if (file !== "-") return readFileSync(resolve(dir, file), "utf8");
+    const path = resolve(dir, file);
+    return written.get(path) ?? readFileSync(path, "utf8");
+  };
+  return (file) => {
+    if (file !== "-") return load(file);
     if (stdin === undefined) return "";
-    return "text" in stdin ? stdin.text : readFileSync(resolve(dir, stdin.file), "utf8");
+    return "text" in stdin ? stdin.text : load(stdin.file);
   };
 }
 
-function ghPosts(args: string[], stdin: Stdin | undefined, dir: string): Post[] {
-  if (args[0] === "api") return ghApiPosts(args.slice(1), stdin, dir);
+function ghPosts(args: string[], stdin: Stdin | undefined, dir: string, written: Written): Post[] {
+  if (args[0] === "api") return ghApiPosts(args.slice(1), reader(stdin, dir, written), dir);
   const post = parseGh(args);
   if (!post) return [];
-  return postTexts(post, reader(stdin, dir)).map(([where, text]) => ({ where, kind: post.kind, text, cwd: dir }));
+  return postTexts(post, reader(stdin, dir, written)).map(([where, text]) => ({ where, kind: post.kind, text, cwd: dir }));
 }
 
 const GH_API_VALUE_FLAGS = new Set(["-X", "--method", "-f", "--raw-field", "-F", "--field", "-H", "--header", "-q",
@@ -84,7 +108,7 @@ const GH_API_VALUE_FLAGS = new Set(["-X", "--method", "-f", "--raw-field", "-F",
 
 // gh api sends its fields, or the --input file, and switches to POST when it has either. A GraphQL query that
 // isn't a mutation only reads.
-function ghApiPosts(args: string[], stdin: Stdin | undefined, dir: string): Post[] {
+function ghApiPosts(args: string[], read: (file: string) => string, dir: string): Post[] {
   let endpoint: string | undefined;
   let method: string | undefined;
   let input: string | undefined;
@@ -114,7 +138,6 @@ function ghApiPosts(args: string[], stdin: Stdin | undefined, dir: string): Post
   }
   method ??= fields.length > 0 || input !== undefined ? "POST" : "GET";
   if (method === "GET" || method === "HEAD") return [];
-  const read = reader(stdin, dir);
   const target = `gh api ${endpoint ?? ""}`.trim();
   const kind = apiKind(endpoint ?? "");
   const texts: [string, string][] = [];
@@ -204,7 +227,7 @@ const GIT_VALUE_OPTIONS = new Set(["-c", "--git-dir", "--work-tree", "--namespac
 
 // The messages git commit and git tag are given. A push is the pre-push hook's to check, since only git knows
 // what it sends.
-function gitPosts(args: string[], stdin: Stdin | undefined, cwd: string): Post[] {
+function gitPosts(args: string[], stdin: Stdin | undefined, cwd: string, written: Written): Post[] {
   let dir = cwd;
   let i = 0;
   for (; i < args.length; i++) {
@@ -218,7 +241,7 @@ function gitPosts(args: string[], stdin: Stdin | undefined, cwd: string): Post[]
   const command = args[i];
   const options = command === "commit" ? COMMIT : command === "tag" ? TAG : undefined;
   if (options === undefined) return [];
-  return messages(args.slice(i + 1), options, reader(stdin, dir)).map(([where, text]) => ({
+  return messages(args.slice(i + 1), options, reader(stdin, dir, written)).map(([where, text]) => ({
     where,
     kind: "commit",
     text,

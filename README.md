@@ -163,8 +163,10 @@ It checks:
   file's contents are checked like the lines a push adds, so `exempt_files` applies to them.
 
 A body can come from a heredoc (`--body "$(cat <<'EOF' … EOF)"`), a here-string, a file, or `cat`, `echo` or
-`printf` piped in. A body the shell fills in only when the command runs, such as `--body "$BODY"`, can't be read
-beforehand, so the call is denied. Put the text in the command, or in a file and pass its path.
+`printf` piped in. A file the same command writes first, as in `cat > body.md <<'EOF'`, is read from the command,
+since the hook runs before it does. Posts inside `$(…)` and backticks are checked too. A body the shell fills in
+only when the command runs, such as `--body "$BODY"`, can't be read beforehand, so the call is denied. Put the text
+in the command, or in a file and pass its path.
 
 The plugin never approves a call. A clean post goes on to Claude Code's usual permission check. If the hook itself
 fails or times out, the call is denied.

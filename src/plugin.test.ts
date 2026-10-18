@@ -75,6 +75,14 @@ test("the hook checks git commit messages, and leaves other commands alone", () 
   assert.equal(hook({ tool_name: "Read", tool_input: { file_path: join(repo, TERM) } }).denied, false);
 });
 
+test("the hook checks posts inside substitutions, and files the command writes first", () => {
+  assert.match(hook(bash(`PR_URL=$(gh pr create -t "Move the cache" -b "${LEAKY}")`)).reason, /body of this pull request/);
+  assert.match(hook(bash(`echo \`git commit -m "${LEAKY}"\``)).reason, /this commit message/);
+  writeFileSync(join(repo, "body.md"), `${CLEAN}\n`);
+  const rewrite = `cat > body.md <<'EOF'\n${LEAKY}\nEOF\ngh pr create -t "Move the cache" -F body.md`;
+  assert.match(hook(bash(rewrite)).reason, /private term/);
+});
+
 test("the hook refuses a post it can't read, or whose check fails", () => {
   assert.match(hook(bash(`gh pr comment 5 --body "$BODY"`)).reason, /can't check what this command posts[^]*\$BODY/);
   assert.match(hook(bash(`gh pr comment 5 --body-file missing.md`)).reason, /the check failed/);
