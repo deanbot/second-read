@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Rules } from "./checks.ts";
+import { isBlanketEmail, isBlanketPath, type Rules } from "./checks.ts";
 import { fold, termPattern } from "./normalize.ts";
 import { parseToml, type TomlValue } from "./toml.ts";
 
@@ -49,7 +49,26 @@ export function loadRepoConfig(path: string, terms: string[]): RepoConfig {
       throw new ConfigError(`${path}: line ${line} names one of your private terms; take it out of the repository`);
     }
   }
-  return allowLists(values, path, []);
+  // Anyone who can change the repository can change this file, so it can't switch a whole check off.
+  // The user's own file can, since it never leaves the machine.
+  const lists = allowLists(values, path, []);
+  for (const entry of lists.allowedPaths) {
+    if (isBlanketPath(entry)) {
+      throw new ConfigError(
+        `${path}: allowed_paths entry ${JSON.stringify(entry)} takes in the whole home folder or a temp folder; ` +
+          `a repository can allow only narrower paths`,
+      );
+    }
+  }
+  for (const entry of lists.allowedEmails) {
+    if (isBlanketEmail(entry)) {
+      throw new ConfigError(
+        `${path}: allowed_emails entry ${JSON.stringify(entry)} has no fixed domain; ` +
+          `a repository has to name one, as in "*@example.com"`,
+      );
+    }
+  }
+  return lists;
 }
 
 // The nearest .second-read.toml at or above `cwd`, up to the top of the git repository. Outside a repository

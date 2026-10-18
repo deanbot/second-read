@@ -13,6 +13,8 @@ import {
 } from "./config.ts";
 import { findRealGh, isShim, parseGh, shimScript } from "./gh.ts";
 import {
+  type AllowlistChange,
+  allowlistChanges,
   commitMessage,
   exitStatus,
   HOOKS,
@@ -215,6 +217,7 @@ async function runHook(io: Io, args: string[]): Promise<number> {
   const { identity, rules } = loadRules(io);
   let input: Buffer | undefined;
   let sections: Section[];
+  let changes: AllowlistChange[] = [];
   const found = { commits: 0, tags: 0 };
   if ((name as HookName) === "commit-msg") {
     const file = gitArgs[0];
@@ -231,13 +234,38 @@ async function runHook(io: Io, args: string[]): Promise<number> {
       sections.push({ where: pushedWhere(pushed), findings });
       found[pushed.kind === "tag" ? "tags" : "commits"]++;
     });
+    changes = unreviewed(allowlistChanges(range, gitArgs[0] ?? "", io.cwd, io.env), io.env[ALLOWLIST_REVIEWED]);
   }
   sections = sections.filter((s) => s.findings.length > 0);
-  if (sections.length > 0) {
-    io.err(report(sections, name === "commit-msg" ? FIX_TEXT : pushFix(found)));
-    return EXIT.findings;
-  }
+  if (sections.length > 0) io.err(report(sections, name === "commit-msg" ? FIX_TEXT : pushFix(found)));
+  if (changes.length > 0) io.err(allowlistReport(changes));
+  if (sections.length > 0 || changes.length > 0) return EXIT.findings;
   return runPrevious(resolve(io.cwd, hookPath), gitArgs, io.cwd, io.env, input);
+}
+
+// Names the versions of .second-read.toml someone has read, by blob id, and the commits that delete one, so a
+// push that brings only those goes through. An id stands for that change only: a later change is refused again,
+// even with the variable left set.
+export const ALLOWLIST_REVIEWED = "SECOND_READ_ALLOWLIST_REVIEWED";
+
+function unreviewed(changes: AllowlistChange[], reviewed: string | undefined): AllowlistChange[] {
+  const ids = new Set((reviewed ?? "").toLowerCase().split(/[\s,]+/));
+  return changes.filter((c) => !ids.has(c.id.toLowerCase()));
+}
+
+// The allowlist decides what the check lets through, and the push is checked against the version it brings.
+function allowlistReport(changes: AllowlistChange[]): string {
+  const rows = changes.map((c) =>
+    c.deleted ? `  commit ${c.commit} deletes ${c.file}\n` : `  commit ${c.commit} changes ${c.file}, blob ${c.id}\n`,
+  );
+  const ids = [...new Set(changes.map((c) => c.id))].join(" ");
+  return (
+    `second-read: this push changes the repository's allowlist, which decides what the check lets through.\n` +
+    rows.join("") +
+    `A person should read each change (git show <commit> -- <file>) before it's pushed. ` +
+    `If it's meant, push again with ${ALLOWLIST_REVIEWED}="${ids}"; ` +
+    `it covers only these changes.\n`
+  );
 }
 
 function pushFix({ commits, tags }: { commits: number; tags: number }): string {

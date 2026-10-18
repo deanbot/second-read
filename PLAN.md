@@ -44,7 +44,9 @@ So the check has to run **before** a post goes out, and it can't rely on the per
 - **Configuration:**
   - the user's file in the platform's config folder (`~/.config/second-read/` where there is no other convention):
     private terms, allowed emails, allowed paths;
-  - a repository's `.second-read.toml`: an allowlist only, never private terms;
+  - a repository's `.second-read.toml`: an allowlist only, never private terms. Anyone with write access can change
+    it, so an entry that switches a whole check off is an error, and `pre-push` refuses a change to it until the
+    new version's blob id, or the id of the commit that deletes it, is given;
   - `second-read init` writes the user's file with comments and no terms, and says how to add them.
 - **Runtime:** TypeScript on Node 22, zero runtime dependencies, published as one npm package. It must start fast
   enough to run on every commit.

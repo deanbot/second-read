@@ -546,6 +546,157 @@ test("the repository's allowlist comes from the repository the hook runs in", ()
   assert.equal(commit(dir, "Fix the billing page again (#2)").status, 1);
 });
 
+function blob(dir: string, rev: string): string {
+  return git(dir, "rev-parse", rev).trim();
+}
+
+function pushReviewed(dir: string, ids: string, ...args: string[]) {
+  return run("git", ["push", "-q", ...args], dir, "", { SECOND_READ_ALLOWLIST_REVIEWED: ids });
+}
+
+test("pre-push refuses a change to the repository's allowlist until its blob id is given", () => {
+  const dir = installed();
+  bareRemote(dir);
+  assert.equal(commit(dir, "Start (#7)", { "notes.txt": "one\n" }).status, 0);
+  assert.equal(push(dir, "origin", "main").status, 0);
+
+  assert.equal(commit(dir, "Allow a word (#7)", { ".second-read.toml": 'allowed_words = ["billing"]\n' }).status, 0);
+  const id = blob(dir, "HEAD:.second-read.toml");
+  const refused = push(dir, "origin", "main");
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /this push changes the repository's allowlist/);
+  assert.match(refused.stderr, new RegExp(`commit [0-9a-f]+ changes \\.second-read\\.toml, blob ${id}\\n`));
+  assert.match(refused.stderr, new RegExp(`SECOND_READ_ALLOWLIST_REVIEWED="${id}"`));
+
+  // Any other value, "1" included, is refused too.
+  for (const value of ["1", "0".repeat(40)]) {
+    assert.equal(pushReviewed(dir, value, "origin", "main").status, 1);
+  }
+  const pushed = pushReviewed(dir, id, "origin", "main");
+  assert.equal(pushed.status, 0, pushed.stderr);
+
+  // The id covers that version only: a later change is refused even with the variable left set.
+  const more = 'allowed_words = ["billing"]\nallowed_paths = ["~/.config/example-tool"]\n';
+  assert.equal(commit(dir, "Allow more (#7)", { ".second-read.toml": more }).status, 0);
+  const later = pushReviewed(dir, id, "origin", "main");
+  assert.equal(later.status, 1);
+  assert.match(later.stderr, new RegExp(`blob ${blob(dir, "HEAD:.second-read.toml")}`));
+});
+
+test("the review still checks everything else the push brings", () => {
+  const dir = installed();
+  bareRemote(dir);
+  assert.equal(commit(dir, "Start (#7)").status, 0);
+  git(dir, "switch", "-q", "-c", "feature");
+  writeFileSync(join(dir, ".second-read.toml"), 'allowed_words = ["billing"]\n');
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "--no-verify", "-m", `Allow a word for ${TERM}`);
+  const id = blob(dir, "HEAD:.second-read.toml");
+  const both = push(dir, "origin", "feature");
+  assert.equal(both.status, 1);
+  assert.match(both.stderr, /1 finding in the message of commit/);
+  assert.match(both.stderr, /this push changes the repository's allowlist/);
+  const refused = pushReviewed(dir, id, "origin", "feature");
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /private term/);
+  assert.doesNotMatch(refused.stderr, /allowlist/);
+});
+
+test("pre-push sees an allowlist in a subfolder, a change that only removes lines, a rename and a deletion", () => {
+  const dir = installed();
+  bareRemote(dir);
+  mkdirSync(join(dir, "sub"));
+  const list = ["allowed_paths = [", '  "~/.config/one",', '  "~/.config/two",', "]", ""];
+  assert.equal(commit(dir, "Start (#7)", { "sub/allow.txt": list.join("\n") }).status, 0);
+  assert.equal(push(dir, "origin", "main").status, 0);
+  const file = join(dir, "sub", ".second-read.toml");
+  const cases: [string, () => void][] = [
+    ["rename", () => git(dir, "mv", "sub/allow.txt", "sub/.second-read.toml")],
+    ["remove a line", () => writeFileSync(file, list.toSpliced(2, 1).join("\n"))],
+  ];
+  for (const [what, change] of cases) {
+    change();
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "--no-verify", "-m", `${what} (#7)`);
+    const id = blob(dir, "HEAD:sub/.second-read.toml");
+    const refused = push(dir, "origin", "main");
+    assert.equal(refused.status, 1, what);
+    assert.match(refused.stderr, new RegExp(`changes sub/\\.second-read\\.toml, blob ${id}\\n`), what);
+    const pushed = pushReviewed(dir, id, "origin", "main");
+    assert.equal(pushed.status, 0, `${what}: ${pushed.stderr}`);
+  }
+
+  // A deletion is named by its commit, so the id of the version it deletes, if it's still set, doesn't cover it.
+  const last = blob(dir, "HEAD:sub/.second-read.toml");
+  git(dir, "rm", "-q", "sub/.second-read.toml");
+  git(dir, "commit", "-q", "--no-verify", "-m", "Delete (#7)");
+  const stale = pushReviewed(dir, last, "origin", "main");
+  assert.equal(stale.status, 1);
+  assert.match(stale.stderr, new RegExp(`commit ${head(dir)} deletes sub/\\.second-read\\.toml\\n`));
+  assert.match(stale.stderr, new RegExp(`SECOND_READ_ALLOWLIST_REVIEWED="${head(dir)}"`));
+  const pushed = pushReviewed(dir, head(dir), "origin", "main");
+  assert.equal(pushed.status, 0, pushed.stderr);
+});
+
+test("pre-push refuses a merge whose resolution writes a new allowlist, but not one that takes a side's", () => {
+  const dir = installed();
+  bareRemote(dir);
+  const file = join(dir, ".second-read.toml");
+  assert.equal(commit(dir, "Start (#7)", { ".second-read.toml": "allowed_paths = []\n" }).status, 0);
+  assert.equal(pushReviewed(dir, blob(dir, "HEAD:.second-read.toml"), "origin", "main").status, 0);
+  git(dir, "switch", "-q", "-c", "side");
+  writeFileSync(file, 'allowed_paths = ["~/.config/one"]\n');
+  git(dir, "commit", "-q", "-a", "--no-verify", "-m", "Side (#7)");
+  git(dir, "switch", "-q", "main");
+  writeFileSync(file, 'allowed_paths = ["~/.config/two"]\n');
+  git(dir, "commit", "-q", "-a", "--no-verify", "-m", "Main (#7)");
+  // Each side's version is reviewed and pushed.
+  const sides = `${blob(dir, "main:.second-read.toml")} ${blob(dir, "side:.second-read.toml")}`;
+  assert.equal(pushReviewed(dir, sides, "origin", "main", "side").status, 0);
+
+  assert.notEqual(run("git", ["merge", "-q", "side"], dir).status, 0);
+  writeFileSync(file, 'allowed_paths = ["~/.config/one", "~/.config/two", "~/.config/three"]\n');
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "--no-verify", "--no-edit");
+  const id = blob(dir, "HEAD:.second-read.toml");
+  const refused = pushReviewed(dir, sides, "origin", "main");
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, new RegExp(`commit ${head(dir)} changes \\.second-read\\.toml, blob ${id}\\n`));
+  assert.equal(pushReviewed(dir, id, "origin", "main").status, 0);
+
+  // A merge that takes one side's version unchanged brings nothing new to read.
+  git(dir, "reset", "-q", "--hard", "HEAD~1");
+  git(dir, "switch", "-q", "-c", "other");
+  assert.notEqual(run("git", ["merge", "-q", "side"], dir).status, 0);
+  git(dir, "checkout", "-q", "--theirs", ".second-read.toml");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "--no-verify", "--no-edit");
+  const pushed = push(dir, "origin", "other");
+  assert.equal(pushed.status, 0, pushed.stderr);
+});
+
+test("pre-push names a file with a space in it as it is", () => {
+  const dir = installed();
+  bareRemote(dir);
+  mkdirSync(join(dir, "sub dir"));
+  writeFileSync(join(dir, "sub dir", "notes.txt"), `${TERM}\n`);
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "--no-verify", "-m", "Notes (#7)");
+  const refused = push(dir, "origin", "main");
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /adds to sub dir\/notes\.txt\. /);
+});
+
+test("a blanket entry in the repository's allowlist fails the check", () => {
+  const dir = installed();
+  writeFileSync(join(dir, ".second-read.toml"), 'allowed_paths = ["~"]\n');
+  const refused = commit(dir, "Clean (#7)");
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /the check failed: .*allowed_paths entry "~"/);
+  const checked = secondRead(dir, ["check"], "Clean\n");
+  assert.equal(checked.status, 2);
+});
+
 // The shim, in a folder ahead of a fake gh that notes its arguments and input and exits 3.
 function shimSetup() {
   const shimDir = fresh("shim");

@@ -65,7 +65,10 @@ A term matches in any case, with or without accents, in fullwidth forms, with in
 with its words joined by spaces, hyphens or nothing. It doesn't catch misspellings.
 
 A repository can check in a `.second-read.toml` with the same `allowed_*` keys. It can't hold `terms`, and it's an
-error if it names one of your private terms.
+error if it names one of your private terms. Since anyone who can change the repository can change it, it also can't
+switch a whole check off: `allowed_paths` can't take in all of `~` or a temp folder, and each `allowed_emails`
+pattern needs a fixed domain (`*@example.com` or `*@*.example.com`, not `*@*` or `*@*.com`). Your own file can allow
+anything.
 
 ## The guards
 
@@ -75,7 +78,10 @@ second-read shim install     # writes a gh shim, and says which folder to put ah
 ```
 
 - **`commit-msg`** checks the message git is about to commit.
-- **`pre-push`** checks the message and the added lines of every commit the remote doesn't have yet.
+- **`pre-push`** checks the message and the added lines of every commit the remote doesn't have yet. It also refuses
+  a push that changes a `.second-read.toml`, and prints an id for each change: the new version's blob, or the commit
+  that deletes the file. Once you've read the change, push again with `SECOND_READ_ALLOWLIST_REVIEWED="<id>"`. An id
+  covers only that change, so a later one is refused again.
 - **The `gh` shim** checks `--title`, `--body`, `--body-file` and a body read from stdin, for `gh issue` and
   `gh pr` `create`, `edit` and `comment`, and `gh pr review`. Then it runs the real `gh` with the same arguments and
   input. Every other command, `gh api` included, passes straight through.
