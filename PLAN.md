@@ -107,8 +107,10 @@ What the guards can't see: an agent that posts through its own GitHub tool, or t
     the post.
   - **Options:** `model_check` turns it off, and `model` picks the model, `haiku` by default.
   - **Its limits:** a reason given before the cap, or before a compaction or `/clear`, isn't seen. The transcript
-    is written asynchronously, so the newest turn could in principle be missing, though it was there in every
-    test run. A paraphrase the model misses goes out. Text the user pasted from elsewhere can try to steer it,
+    is written asynchronously, so the newest turn, the likeliest to lead to a post, may be missing. It was there
+    in each headless run tried on Claude Code 2.1.302: a new session, a resumed one, and a call from a subagent,
+    whose hook is given the main session's transcript. Interactive sessions weren't tried. The hook input's
+    `prompt_id` matched the newest turn's `promptId` in the transcript, so a missing turn could be detected. A paraphrase the model misses goes out. Text the user pasted from elsewhere can try to steer it,
     which fits a safety net, not a boundary.
 - **Others** (Gemini CLI, Codex, Kiro, …): one adapter each, written from that tool's current hook or extension docs
   when someone uses it. Where a tool has no hook, the git and `gh` guards still apply.
