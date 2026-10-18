@@ -78,10 +78,13 @@ second-read shim install     # writes a gh shim, and says which folder to put ah
 ```
 
 - **`commit-msg`** checks the message git is about to commit.
-- **`pre-push`** checks the message and the added lines of every commit the remote doesn't have yet. It also refuses
-  a push that changes a `.second-read.toml`, and prints an id for each change: the new version's blob, or the commit
-  that deletes the file. Once you've read the change, push again with `SECOND_READ_ALLOWLIST_REVIEWED="<id>"`. An id
-  covers only that change, so a later one is refused again.
+- **`pre-push`** checks the message and the added lines of every commit the remote doesn't have yet, and the name each
+  branch and tag gets on the remote, with the same checks as a message: a branch called `fix-billing-page` is
+  refused for the money word unless the allowlist lets it through. An annotated tag's own name is checked too, since
+  it goes with the tag whatever the remote calls it. Deleting a branch or tag is never refused, since that's how a
+  leaked name is taken back. It also refuses a push that changes a `.second-read.toml`, and prints an id for each
+  change: the new version's blob, or the commit that deletes the file. Once you've read the change, push again with
+  `SECOND_READ_ALLOWLIST_REVIEWED="<id>"`. An id covers only that change, so a later one is refused again.
 - **The `gh` shim** checks `--title`, `--body`, `--body-file` and a body read from stdin, for `gh issue` and
   `gh pr` `create`, `edit` and `comment`, and `gh pr review`. Then it runs the real `gh` with the same arguments and
   input. Every other command, `gh api` included, passes straight through.

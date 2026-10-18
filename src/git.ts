@@ -353,6 +353,14 @@ export interface PushRange {
   exclude: string[];
   // Annotated tags being pushed. A tag's message is public even when the remote has its commit.
   tags: string[];
+  // The names the push gives the remote's refs. Only the remote name is sent, not the local one.
+  refs: PushedRef[];
+}
+
+export interface PushedRef {
+  kind: "branch" | "tag" | "ref";
+  // Without refs/heads/ or refs/tags/. Any other ref keeps its whole name.
+  name: string;
 }
 
 // Reads git's pre-push input: one "<local ref> <local sha> <remote ref> <remote sha>" line per ref being pushed.
@@ -360,21 +368,31 @@ export interface PushRange {
 export function pushRange(stdin: string, cwd: string, env: NodeJS.ProcessEnv): PushRange {
   const include: string[] = [];
   const remoteShas: string[] = [];
+  const refs: PushedRef[] = [];
   for (const line of stdin.split("\n")) {
     if (line.trim() === "") continue;
-    const [, localSha, , remoteSha] = line.trim().split(/\s+/);
-    if (!localSha || !remoteSha) throw new GitError(`unexpected pre-push input: ${JSON.stringify(line)}`);
-    // A deleted branch pushes nothing.
+    const [, localSha, remoteRef, remoteSha] = line.trim().split(/\s+/);
+    if (!localSha || !remoteRef || !remoteSha) {
+      throw new GitError(`unexpected pre-push input: ${JSON.stringify(line)}`);
+    }
+    // A deleted branch pushes nothing, and deleting it is how a leaked name is taken back.
     if (ZERO.test(localSha)) continue;
     include.push(localSha);
+    refs.push(pushedRef(remoteRef));
     if (!ZERO.test(remoteSha)) remoteShas.push(remoteSha);
   }
-  if (include.length === 0) return { include, exclude: [], tags: [] };
+  if (include.length === 0) return { include, exclude: [], tags: [], refs };
   const types = objectTypes([...include, ...remoteShas], cwd, env);
   // The remote's old tip, when it's here too. After a force push it may not be, and the remote's refs cover it.
   const exclude = remoteShas.filter((sha) => types.get(sha) === "commit");
   const tags = include.filter((sha) => types.get(sha) === "tag");
-  return { include, exclude, tags };
+  return { include, exclude, tags, refs };
+}
+
+function pushedRef(ref: string): PushedRef {
+  if (ref.startsWith("refs/heads/")) return { kind: "branch", name: ref.slice("refs/heads/".length) };
+  if (ref.startsWith("refs/tags/")) return { kind: "tag", name: ref.slice("refs/tags/".length) };
+  return { kind: "ref", name: ref };
 }
 
 function objectTypes(shas: string[], cwd: string, env: NodeJS.ProcessEnv): Map<string, string> {

@@ -25,6 +25,7 @@ import {
   installManaged,
   isManagedDir,
   type Pushed,
+  type PushedRef,
   pushRange,
   readPushed,
   refreshManaged,
@@ -218,7 +219,7 @@ async function runHook(io: Io, args: string[]): Promise<number> {
   let input: Buffer | undefined;
   let sections: Section[];
   let changes: AllowlistChange[] = [];
-  const found = { commits: 0, tags: 0 };
+  const found = { commits: 0, tags: 0, names: [] as PushedRef[] };
   if ((name as HookName) === "commit-msg") {
     const file = gitArgs[0];
     if (file === undefined) throw new Error("commit-msg was given no message file");
@@ -228,7 +229,22 @@ async function runHook(io: Io, args: string[]): Promise<number> {
     input = await io.readStdin();
     const range = pushRange(input.toString("utf8"), io.cwd, io.env);
     sections = [];
+    for (const ref of range.refs) {
+      const findings = check(ref.name, { identity, rules, kind: "commit" });
+      if (findings.length === 0) continue;
+      sections.push({ where: `the name of ${ref.kind} ${ref.name}`, findings });
+      found.names.push(ref);
+    }
+    const tagNames = new Set(range.refs.filter((r) => r.kind === "tag").map((r) => r.name));
     await readPushed(range, gitArgs[0] ?? "", io.cwd, io.env, (pushed) => {
+      // An annotated tag holds its own name, which goes with it whatever the ref is called.
+      if (pushed.kind === "tag" && !tagNames.has(pushed.commit)) {
+        const findings = check(pushed.commit, { identity, rules, kind: "commit" });
+        if (findings.length > 0) {
+          sections.push({ where: `the name written in tag ${pushed.commit}`, findings });
+          found.tags++;
+        }
+      }
       const findings = checkPushed(pushed, identity, rules);
       if (findings.length === 0) return;
       sections.push({ where: pushedWhere(pushed), findings });
@@ -268,10 +284,20 @@ function allowlistReport(changes: AllowlistChange[]): string {
   );
 }
 
-function pushFix({ commits, tags }: { commits: number; tags: number }): string {
+function pushFix({ commits, tags, names }: { commits: number; tags: number; names: PushedRef[] }): string {
   const tag = `the ${tags === 1 ? "tag" : "tags"} with git tag -f -a`;
-  if (commits === 0) return `fix ${tag}, and push again`;
-  return tags === 0 ? "fix the commits and push again" : `fix the commits, and ${tag}, and push again`;
+  let fix = "";
+  if (commits > 0 && tags > 0) fix = `fix the commits, and ${tag}`;
+  else if (commits > 0) fix = "fix the commits";
+  else if (tags > 0) fix = `fix ${tag}`;
+  if (names.length > 0) {
+    const kinds = new Set(names.map((r) => r.kind));
+    const kind = kinds.size === 1 ? [...kinds][0]! : "ref";
+    const noun = `the ${names.length === 1 ? kind : kind === "branch" ? "branches" : kind + "s"}`;
+    const rename = `push ${noun} under a new name (git branch -m, or a new tag)`;
+    return fix === "" ? `${rename}, and push again` : `${fix}, ${rename}, and push again`;
+  }
+  return commits > 0 && tags === 0 ? `${fix} and push again` : `${fix}, and push again`;
 }
 
 function checkPushed(pushed: Pushed, identity: Identity, rules: Rules): Finding[] {
