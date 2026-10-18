@@ -36,14 +36,16 @@ So the check has to run **before** a post goes out, and it can't rely on the per
   - paths under the home folder, written with the real account name or as `~/` followed by something other than an
     allowed generic name;
   - temporary and scratch folders;
-  - the account name, the machine name, and email addresses outside the allowlist;
+  - the account name, the machine name, and email addresses outside the allowlist. A machine name a system gives
+    by default, or a word for the kind of computer, isn't flagged. Only the user's own file can allow any other
+    name, since a repository that names it posts it;
   - money and accounts: words for plans, billing, payments, subscriptions, spending and usage limits, and amounts
     of money. These are the most likely to give false alarms in some repositories, so a repository's allowlist
     can switch off single words;
   - every term on the user's list, matched case-insensitively at word boundaries, after Unicode normalisation.
 - **Configuration:**
   - the user's file in the platform's config folder (`~/.config/second-read/` where there is no other convention):
-    private terms, allowed emails, allowed paths;
+    private terms, allowed emails, allowed paths, allowed account and machine names;
   - a repository's `.second-read.toml`: an allowlist only, never private terms. Anyone with write access can change
     it, so an entry that switches a whole check off is an error, and `pre-push` refuses a change to it until the
     new version's blob id, or the id of the commit that deletes it, is given. Its `exempt_files` globs name files

@@ -9,7 +9,7 @@ const identity: Identity = {
   tempDirs: ["/var/folders/zz/example0000/T/"],
 };
 
-const noRules: Rules = { terms: [], allowedWords: [], allowedEmails: [], allowedPaths: [] };
+const noRules: Rules = { terms: [], allowedWords: [], allowedEmails: [], allowedPaths: [], allowedNames: [] };
 
 function found(text: string, rules: Partial<Rules> = {}, who: Identity = identity): [string, string][] {
   return check(text, { identity: who, rules: { ...noRules, ...rules } }).map((f) => [
@@ -75,11 +75,32 @@ test("generic and very short account names are not flagged", () => {
   }
 });
 
-test("an allowed word switches off an account or machine name that's an ordinary word", () => {
-  const who = { ...identity, user: "maple", home: "/Users/maple" };
-  assert.deepEqual(found("maple syrup", {}, who), [["account name", "maple"]]);
-  assert.deepEqual(found("maple syrup", { allowedWords: ["Maple"] }, who), []);
-  assert.deepEqual(found("in /Users/maple/x", { allowedWords: ["maple"] }, who), [["home path", "/Users/maple/x"]]);
+test("a common default machine name is not flagged, even numbered, but one with the owner's name in it is", () => {
+  for (const host of ["MacBook-Pro.local", "macbookpro", "MacBook-Pro-2.local", "Mac-mini", "raspberrypi", "penguin"]) {
+    const who = { ...identity, host };
+    assert.deepEqual(found("Tested on a MacBook Pro, a Mac mini, a Raspberry Pi and a penguin", {}, who), [], host);
+  }
+  const owned = { ...identity, host: "Sam-MacBook-Pro.local" };
+  assert.deepEqual(found("Tested on a MacBook Pro and on sam-macbook-pro", {}, owned), [
+    ["machine name", "sam-macbook-pro"],
+  ]);
+  // A chosen name that's also a word is still flagged.
+  const chosen = { ...identity, host: "maple.local" };
+  assert.deepEqual(found("maple syrup", {}, chosen), [["machine name", "maple"]]);
+});
+
+test("allowed names switch off an account or machine name that's an ordinary word, and allowed words don't", () => {
+  const who = { ...identity, user: "maple", home: "/Users/maple", host: "juniper.local" };
+  assert.deepEqual(found("maple syrup and juniper", {}, who), [
+    ["account name", "maple"],
+    ["machine name", "juniper"],
+  ]);
+  assert.deepEqual(found("maple syrup and juniper", { allowedWords: ["maple", "juniper"] }, who), [
+    ["account name", "maple"],
+    ["machine name", "juniper"],
+  ]);
+  assert.deepEqual(found("maple syrup and juniper", { allowedNames: ["Maple", "juniper"] }, who), []);
+  assert.deepEqual(found("in /Users/maple/x", { allowedNames: ["maple"] }, who), [["home path", "/Users/maple/x"]]);
 });
 
 test("email addresses outside the allowlist", () => {

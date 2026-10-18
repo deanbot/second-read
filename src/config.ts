@@ -14,9 +14,10 @@ export interface UserConfig {
   allowedWords: string[];
   allowedEmails: string[];
   allowedPaths: string[];
+  allowedNames: string[];
 }
 
-export type Allowlists = Omit<UserConfig, "terms">;
+export type Allowlists = Omit<UserConfig, "terms" | "allowedNames">;
 
 export interface RepoConfig extends Allowlists {
   // Globs of the files whose added lines pre-push checks for private terms only.
@@ -34,9 +35,13 @@ export function configDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, hom
 
 // A missing user file means no private terms yet, not a failure: the other checks still run.
 export function loadUserConfig(path: string): UserConfig {
-  if (!existsSync(path)) return { terms: [], allowedWords: [], allowedEmails: [], allowedPaths: [] };
+  if (!existsSync(path)) return { terms: [], allowedWords: [], allowedEmails: [], allowedPaths: [], allowedNames: [] };
   const values = parseFile(path);
-  return { terms: stringList(values, "terms", path), ...allowLists(values, path, ["terms"]) };
+  return {
+    terms: stringList(values, "terms", path),
+    ...allowLists(values, path, ["terms", "allowed_names"]),
+    allowedNames: stringList(values, "allowed_names", path),
+  };
 }
 
 // A repository's file holds only an allowlist. It's checked in, so a private term in it would be posted.
@@ -45,6 +50,12 @@ export function loadRepoConfig(path: string, terms: string[]): RepoConfig {
   const values = parseText(source, path);
   if (Object.hasOwn(values, "terms")) {
     throw new ConfigError(`${path}: private terms belong in your own config file, never in a repository`);
+  }
+  if (Object.hasOwn(values, "allowed_names")) {
+    throw new ConfigError(
+      `${path}: allowed_names belongs in your own config file, since naming your account or machine in a ` +
+        `repository posts it`,
+    );
   }
   const folded = fold(source).text;
   for (const term of terms) {
@@ -138,6 +149,7 @@ export function mergeRules(user: UserConfig, repo: Allowlists | undefined): Rule
     allowedWords: [...user.allowedWords, ...(repo?.allowedWords ?? [])],
     allowedEmails: [...user.allowedEmails, ...(repo?.allowedEmails ?? [])],
     allowedPaths: [...user.allowedPaths, ...(repo?.allowedPaths ?? [])],
+    allowedNames: user.allowedNames,
   };
 }
 
@@ -150,9 +162,12 @@ export const USER_FILE_TEMPLATE = `# second-read: your private terms and allowli
 terms = [
 ]
 
-# Money and account words that are fine to post everywhere, as a report names them (such as "billing"),
-# and an account or machine name that is also an ordinary word.
+# Money and account words that are fine to post everywhere, as a report names them (such as "billing").
 allowed_words = []
+
+# Your account or machine name, when it's an ordinary word that's fine to post, so it isn't flagged anywhere.
+# Common default machine names, such as "MacBook-Pro", are never flagged. Paths with your account name still are.
+allowed_names = []
 
 # Email addresses that are fine to post. "*" matches any run of characters, as in "*@example.com".
 allowed_emails = []

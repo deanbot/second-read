@@ -25,6 +25,8 @@ export interface Rules {
   allowedWords: string[];
   allowedEmails: string[];
   allowedPaths: string[];
+  // From the user's own file only.
+  allowedNames: string[];
 }
 
 export interface CheckOptions {
@@ -80,11 +82,25 @@ export const DEFAULT_ALLOWED_PATHS = [
   "~/.profile",
 ];
 
-// Account and machine names too generic to flag.
-const GENERIC_NAMES = new Set([
-  "admin", "app", "dev", "ec2-user", "guest", "localhost", "node", "nobody", "root", "runner", "ubuntu", "user",
-  "vagrant",
-]);
+// Account and machine names too generic to flag: ones a system or an installer sets, and words for the kind or model
+// of computer. A word someone might pick as a name stays out, since a chosen name can say who they are; the user's
+// own allowed_names takes in those.
+const GENERIC_NAMES = new Set(
+  [
+    "admin", "app", "dev", "ec2-user", "guest", "localhost", "node", "nobody", "root", "runner", "ubuntu", "user",
+    "vagrant",
+    "Mac", "MacBook", "MacBook-Air", "MacBook-Pro", "Mac-mini", "Mac-Pro", "Mac-Studio", "iMac", "iMac-Pro",
+    "computer", "desktop", "laptop", "notebook", "workstation", "server",
+    "raspberrypi", "penguin", "steamdeck", "debian", "fedora", "kali", "archiso", "manjaro", "pop-os", "nixos",
+    "docker-desktop",
+  ].map(nameKey),
+);
+
+// A name as it's compared with the lists above: folded, without separators, and without the number a system adds
+// to tell two machines apart, as in "MacBook-Pro-2".
+function nameKey(name: string): string {
+  return fold(name.replace(/[-_ ]\d+$/, "")).text.replace(/[^\p{L}\p{N}]+/gu, "");
+}
 
 const TEMP_FOLDERS = ["/tmp", "/var/tmp", "/private/tmp", "/var/folders", "/private/var/folders"];
 
@@ -173,10 +189,12 @@ export function check(input: string, options: CheckOptions): Finding[] {
     ["account name", identity.user],
     ["machine name", identity.host.split(".")[0] ?? ""],
   ];
+  // Only the user's own file can allow a name: naming it in a repository would post it.
+  const allowedNames = new Set(rules.allowedNames.map(nameKey));
   for (const [category, name] of names) {
-    if (name.length < 3 || GENERIC_NAMES.has(name.toLowerCase())) continue;
+    if (name.length < 3 || GENERIC_NAMES.has(nameKey(name)) || allowedNames.has(nameKey(name))) continue;
     const re = termPattern(name);
-    if (re) spans.push(...foldedSpans(folded, re, category, allowedWords));
+    if (re) spans.push(...foldedSpans(folded, re, category));
   }
 
   for (const [word, source] of MONEY) {
