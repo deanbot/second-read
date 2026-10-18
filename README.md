@@ -43,6 +43,18 @@ It isn't a secrets scanner. Tools like gitleaks find keys and tokens, and second
 
 The check runs on your machine, and the text it reads goes nowhere else.
 
+## Install
+
+second-read needs Node 22 or newer.
+
+```sh
+npm install -g second-read
+second-read init
+```
+
+`init` writes your config file and says how to add your private terms. To update later, run
+`npm install -g second-read` again.
+
 ## Using the check
 
 ```sh
