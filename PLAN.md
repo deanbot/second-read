@@ -73,10 +73,10 @@ So the check has to run **before** a post goes out, and it can't rely on the per
   lines added to the repository's files.
   The names these give are checked as branch names are: a repository's on `create` and `rename`, a release's tag,
   each gist file's name (its basename, or `--filename` for stdin), and the name of each release asset without a
-  label. gh expands such an asset as a glob, so the shim matches it as Go's `filepath.Glob` does, and the Claude
-  Code hook refuses it unread, since the files may not be there until the command runs. An edit checks only the new
-  name, so a leaked one can be renamed away. Grouped short flags are read as gh reads them, from each command's flags
-  that take a value.
+  label. gh expands such an asset as a glob, so the shim matches it at least as widely as Go's `filepath.Glob`
+  does, and the Claude Code hook refuses it unread, since the files may not be there until the command runs. An
+  edit checks only the new name, so a leaked one can be renamed away. Grouped short flags are read as gh reads them,
+  from each command's flags that take a value.
   Every other command passes straight through.
 
 These catch every agent that posts through `git` and `gh`, and the user too.
