@@ -14,6 +14,7 @@ import {
 import { constants as os } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
+import { REPO_FILE } from "./config.ts";
 
 export const HOOKS = ["commit-msg", "pre-push"] as const;
 export type HookName = (typeof HOOKS)[number];
@@ -488,6 +489,53 @@ export async function readPushed(
   flushFile();
   const status = await exited;
   if (status !== 0) throw new GitError(`git log failed: ${stderr.trim()}`);
+}
+
+export interface AllowlistChange {
+  commit: string;
+  file: string;
+  deleted: boolean;
+  // What a review names to let the change through: the file's blob after the commit, or for a deletion, the
+  // commit itself, since the blob it deletes may be one an earlier review already named.
+  id: string;
+}
+
+// Every change the pushed commits make to a .second-read.toml, in any folder, since the nearest one applies.
+// Merge commits are skipped, as readPushed skips them; the commits they bring in are read on their own.
+export function allowlistChanges(range: PushRange, remote: string, cwd: string, env: NodeJS.ProcessEnv) {
+  const changes: AllowlistChange[] = [];
+  if (range.include.length === 0) return changes;
+  const out = git(
+    [
+      "log", "--no-color", "--no-renames", "--diff-merges=off", "--raw", "--no-abbrev", "-z", "--format=format:%x01%H",
+      ...range.include, "--not", ...range.exclude, `--remotes=${remote}`, "--",
+    ],
+    cwd,
+    env,
+  );
+  // With -z: "\x01<commit>\n:<modes> <old> <new> <status>\0<path>\0" and then one more ":…\0<path>\0" per file.
+  let commit = "";
+  let raw: string[] | undefined;
+  for (let token of out.split("\0")) {
+    if (raw !== undefined) {
+      const [, , , blob, status] = raw;
+      const lower = token.toLowerCase();
+      // macOS and Windows folders usually ignore case, so ".Second-Read.toml" is found there too.
+      if (lower === REPO_FILE || lower.endsWith("/" + REPO_FILE)) {
+        const deleted = status === "D";
+        changes.push({ commit, file: token, deleted, id: deleted ? commit : blob! });
+      }
+      raw = undefined;
+      continue;
+    }
+    if (token.startsWith("\x01")) {
+      const newline = token.indexOf("\n");
+      commit = token.slice(1, newline < 0 ? undefined : newline);
+      token = newline < 0 ? "" : token.slice(newline + 1);
+    }
+    if (token.startsWith(":")) raw = token.slice(1).split(" ");
+  }
+  return changes;
 }
 
 function hunkStart(line: string): number {
