@@ -58,7 +58,8 @@ So the check has to run **before** a post goes out, and it can't rely on the per
 ## 4. Guards anyone can use
 
 - **git:** `commit-msg` checks the message. `pre-push` checks the messages and added lines of the commits being
-  pushed, and the names the remote's branches and tags get; a deletion is never refused. `second-read hooks install`
+  pushed, and the names the remote's branches and tags get; a deletion is never refused. A merge's added lines are
+  the ones in none of its parents, as in a conflict resolution. `second-read hooks install`
   adds them to a repository, alongside any hooks already there.
 - **`gh` shim:** a `gh` placed ahead of the real one on `PATH`. For `issue|pr create|edit|comment` and
   `pr review`, it checks `--title`, `--body`, `--body-file` and stdin bodies, then runs the real `gh` unchanged.

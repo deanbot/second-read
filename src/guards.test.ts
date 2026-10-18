@@ -461,6 +461,88 @@ test("pre-push reads an added line that starts with ++ as an added line, not a h
   assert.match(refused.stderr, /1:4 +private term/);
 });
 
+// Pushes a "side" and a "main" that each change the second line of notes.txt, and starts merging side into main.
+function conflict(dir: string, side: string, main: string, verify = true) {
+  bareRemote(dir);
+  assert.equal(commit(dir, "Start (#15)", { "notes.txt": "one\ntwo\nthree\n" }).status, 0);
+  git(dir, "switch", "-q", "-c", "side");
+  assert.equal(commit(dir, "Side (#15)", { "notes.txt": `one\n${side}\nthree\n` }).status, 0);
+  git(dir, "switch", "-q", "main");
+  assert.equal(commit(dir, "Main (#15)", { "notes.txt": `one\n${main}\nthree\n` }).status, 0);
+  const pushed = push(dir, ...(verify ? [] : ["--no-verify"]), "origin", "main", "side");
+  assert.equal(pushed.status, 0, pushed.stderr);
+  assert.notEqual(run("git", ["merge", "-q", "side"], dir).status, 0);
+}
+
+function resolve(dir: string, file: string, text: string) {
+  writeFileSync(join(dir, file), text);
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "--no-verify", "--no-edit");
+}
+
+test("pre-push checks the lines a conflict resolution adds, by their line number in the file", () => {
+  const dir = installed();
+  conflict(dir, "side", "main");
+  resolve(dir, "notes.txt", `one\nside\nport of ${TERM}\nmain\nthree\n`);
+  const short = git(dir, "rev-parse", "--short", "HEAD").trim();
+  const refused = push(dir, "origin", "main");
+  assert.equal(refused.status, 1);
+  const where = `1 finding in the lines commit ${short} adds to notes\\.txt\\. `;
+  assert.match(refused.stderr, new RegExp(`${where}.*\\n {2}3:9 +private term`));
+  assert.match(refused.stderr, /fix the commits and push again/);
+});
+
+test("a merge of clean branches goes through, and so does one that keeps each side's lines as they are", () => {
+  const plain = installed();
+  bareRemote(plain);
+  assert.equal(commit(plain, "Start (#15)", { "notes.txt": "one\ntwo\nthree\n" }).status, 0);
+  git(plain, "switch", "-q", "-c", "side");
+  assert.equal(commit(plain, "Side (#15)", { "notes.txt": "one\ntwo\nthree, side\n" }).status, 0);
+  git(plain, "switch", "-q", "main");
+  assert.equal(commit(plain, "Main (#15)", { "notes.txt": "one, main\ntwo\nthree\n" }).status, 0);
+  git(plain, "merge", "-q", "--no-ff", "--no-edit", "side");
+  const merged = push(plain, "origin", "main", "side");
+  assert.equal(merged.status, 0, merged.stderr);
+
+  const clean = installed();
+  conflict(clean, "side", "main");
+  resolve(clean, "notes.txt", "one\nside\nmain\nthree\n");
+  const pushed = push(clean, "origin", "main");
+  assert.equal(pushed.status, 0, pushed.stderr);
+
+  // Each side's line is already on the remote, so the merge brings nothing new, even where the line has a finding.
+  const dir = installed();
+  conflict(dir, `side of ${TERM}`, `main of ${TERM}`, false);
+  resolve(dir, "notes.txt", `one\nside of ${TERM}\nmain of ${TERM}\nthree\n`);
+  const kept = push(dir, "origin", "main");
+  assert.equal(kept.status, 0, kept.stderr);
+});
+
+test("pre-push checks the lines an octopus merge adds that are in none of its parents", () => {
+  const dir = installed();
+  bareRemote(dir);
+  assert.equal(commit(dir, "Start (#15)", { "notes.txt": "one\ntwo\n" }).status, 0);
+  for (const branch of ["a", "b"]) {
+    git(dir, "switch", "-q", "-c", branch, "main");
+    writeFileSync(join(dir, `${branch}.txt`), `${branch} of ${TERM}\n`);
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "--no-verify", "-m", `Add ${branch} (#15)`);
+  }
+  git(dir, "switch", "-q", "main");
+  assert.equal(commit(dir, "Main (#15)", { "main.txt": "main\n" }).status, 0);
+  assert.equal(push(dir, "--no-verify", "origin", "main", "a", "b").status, 0);
+
+  git(dir, "merge", "-q", "--no-commit", "--no-ff", "a", "b");
+  resolve(dir, "notes.txt", `one\nport of ${TERM}\ntwo\n`);
+  assert.equal(git(dir, "rev-list", "--parents", "-1", "HEAD").trim().split(" ").length, 4);
+  const short = git(dir, "rev-parse", "--short", "HEAD").trim();
+  const refused = push(dir, "origin", "main");
+  assert.equal(refused.status, 1);
+  const where = `1 finding in the lines commit ${short} adds to notes\\.txt\\. `;
+  assert.match(refused.stderr, new RegExp(`${where}.*\\n {2}2:9 +private term`));
+  assert.doesNotMatch(refused.stderr, /adds to [ab]\.txt/);
+});
+
 test("a new branch checks only the commits the remote doesn't have yet", () => {
   const dir = installed();
   bareRemote(dir);
@@ -852,6 +934,32 @@ test("pre-push checks an exempt file's added lines for private terms only", () =
 
   git(dir, "tag", "-a", "v1", "-m", "Paid plan tests");
   assert.match(push(dir, "origin", "v1").stderr, /1 finding in the message of tag v1\./);
+});
+
+test("a conflict resolution in an exempt file is checked for private terms only", () => {
+  const dir = installed();
+  bareRemote(dir);
+  mkdirSync(join(dir, "src"));
+  assert.equal(commit(dir, "Exempt the tests (#15)", { ".second-read.toml": 'exempt_files = ["src/**"]\n' }).status, 0);
+  assert.equal(pushReviewed(dir, blob(dir, "HEAD:.second-read.toml"), "origin", "main").status, 0);
+  assert.equal(commit(dir, "Start (#15)", { "src/a.test.ts": "one\n" }).status, 0);
+  git(dir, "switch", "-q", "-c", "side");
+  assert.equal(commit(dir, "Side (#15)", { "src/a.test.ts": "side\n" }).status, 0);
+  git(dir, "switch", "-q", "main");
+  assert.equal(commit(dir, "Main (#15)", { "src/a.test.ts": "main\n" }).status, 0);
+  assert.equal(push(dir, "origin", "main", "side").status, 0);
+
+  assert.notEqual(run("git", ["merge", "-q", "side"], dir).status, 0);
+  resolve(dir, "src/a.test.ts", FIXTURE);
+  const pushed = push(dir, "origin", "main");
+  assert.equal(pushed.status, 0, pushed.stderr);
+
+  git(dir, "switch", "-q", "-c", "other", "main~1");
+  assert.notEqual(run("git", ["merge", "-q", "side"], dir).status, 0);
+  resolve(dir, "src/a.test.ts", `const dir = "/tmp/${TERM}/x";\n`);
+  const refused = push(dir, "origin", "other");
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /1 finding in the lines commit \w+ adds to src\/a\.test\.ts\. .*\n {2}1:19 +private/);
 });
 
 test("the check and the gh shim read an exempt file in full", () => {

@@ -429,8 +429,9 @@ export function tagMessages(sha: string, cwd: string, env: NodeJS.ProcessEnv): P
   return found;
 }
 
-// Streams each pushed commit's message and the lines it adds, one file at a time. Merge commits show no diff,
-// so only their messages are read; the commits they bring in are read on their own.
+// Streams each pushed commit's message and the lines it adds, one file at a time. A merge adds only the lines that
+// are in none of its parents, as a conflict resolution's are; a line taken from one side came in with the side's
+// own commits, which are read on their own.
 export async function readPushed(
   range: PushRange,
   remote: string,
@@ -442,7 +443,7 @@ export async function readPushed(
   for (const tag of range.tags) for (const pushed of tagMessages(tag, cwd, env)) onText(pushed);
   const args = [
     "-c", "core.quotePath=false",
-    "log", "--no-color", "--no-ext-diff", "--no-textconv", "--diff-merges=off", "-M", "-p", "-U0",
+    "log", "--no-color", "--no-ext-diff", "--no-textconv", "--diff-merges=dense-combined", "-M", "-p", "-U0",
     "--src-prefix=a/", "--dst-prefix=b/", "--format=format:%x01%h%n%B%x02",
     ...range.include, "--not", ...range.exclude, `--remotes=${remote}`, "--",
   ];
@@ -461,6 +462,8 @@ export async function readPushed(
   let added: string[] = [];
   let lines: number[] = [];
   let next = 0;
+  // A merge's combined diff starts each line with one column per parent, and its hunk header with one more "@".
+  let parents = 1;
 
   const flushFile = () => {
     if (file !== undefined && added.length > 0) onText({ kind: "added", commit, file, text: added.join("\n"), lines });
@@ -484,7 +487,7 @@ export async function readPushed(
       if (end > 0) message.push(line.slice(0, end));
       onText({ kind: "message", commit, text: message.join("\n") });
       state = "none";
-    } else if (line.startsWith("diff --git ")) {
+    } else if (line.startsWith("diff --git ") || line.startsWith("diff --cc ") || line.startsWith("diff --combined ")) {
       flushFile();
       state = "header";
     } else if (state === "header") {
@@ -496,13 +499,23 @@ export async function readPushed(
       } else if (line.startsWith("@@")) {
         state = "hunk";
         next = hunkStart(line);
+        parents = hunkParents(line);
       }
     } else if (state === "hunk") {
-      if (line.startsWith("@@")) next = hunkStart(line);
-      else if (line.startsWith("+")) {
-        added.push(line.slice(1));
-        lines.push(next++);
-      } else if (line.startsWith(" ")) next++;
+      if (line.startsWith("@@")) {
+        next = hunkStart(line);
+        parents = hunkParents(line);
+        continue;
+      }
+      // "+" in every column: in none of the parents. A "-" anywhere is a parent's line the commit drops, and any
+      // other mix of "+" and " " a line one of the parents already has.
+      const columns = line.slice(0, parents);
+      if (columns.length < parents || /[^+ ]/.test(columns)) continue;
+      if (!columns.includes(" ")) {
+        added.push(line.slice(parents));
+        lines.push(next);
+      }
+      next++;
     }
   }
   flushFile();
@@ -563,4 +576,8 @@ export function allowlistChanges(range: PushRange, remote: string, cwd: string, 
 function hunkStart(line: string): number {
   const match = /^@@+ (?:-\S+ )+\+(\d+)/.exec(line);
   return match ? Number(match[1]) : 0;
+}
+
+function hunkParents(line: string): number {
+  return Math.max(1, /^@+/.exec(line)![0].length - 1);
 }
