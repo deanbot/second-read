@@ -65,13 +65,18 @@ So the check has to run **before** a post goes out, and it can't rely on the per
   repository, alongside any hooks already there.
 - **`gh` shim:** a `gh` placed ahead of the real one on `PATH`. For `issue|pr create|edit|comment` and
   `pr review`, it checks `--title`, `--body`, `--body-file` and stdin bodies, then runs the real `gh` unchanged.
-  It checks the `--comment` of `issue|pr close|reopen` and the merge commit message of `pr merge` too, and for
-  `release`, `gist`, `label` and `repo` `create|edit`, the title, notes, description, label name and gist files.
-  A gist's files are checked in full, since a gist is a new post, not lines added to the repository's files.
+  It checks the `--comment` of `issue|pr close|reopen` and the merge commit message and `--author-email` of
+  `pr merge` too, and for `release`, `gist`, `label` and `repo` `create|edit`, the title, notes, description, label
+  name and gist files. An author email is checked as an address in a commit is, so the user's own is refused
+  whatever a repository allows, unless it's a noreply address. The label of each asset `release create|upload`
+  sends (`<file>#<label>`) is checked as text. A gist's files are checked in full, since a gist is a new post, not
+  lines added to the repository's files.
   The names these give are checked as branch names are: a repository's on `create` and `rename`, a release's tag,
-  and each gist file's name (its basename, or `--filename` for stdin). An edit checks only the new name, so a
-  leaked one can be renamed away. Grouped short flags are read as gh reads them, from each command's flags that
-  take a value.
+  each gist file's name (its basename, or `--filename` for stdin), and each release asset's file name, labeled or
+  not, since it's in the asset's download URL. gh expands an asset without a label as a glob, so the shim matches
+  it at least as widely as Go's `filepath.Glob` does, and the Claude Code hook refuses it unread, since the files
+  may not be there until the command runs. An edit checks only the new name, so a leaked one can be renamed away.
+  Grouped short flags are read as gh reads them, from each command's flags that take a value.
   Every other command passes straight through.
 
 These catch every agent that posts through `git` and `gh`, and the user too.

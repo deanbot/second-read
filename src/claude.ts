@@ -151,8 +151,15 @@ function ghPosts(args: string[], stdin: Stdin | undefined, dir: string, written:
   if (args[0] === "api") return ghApiPosts(args.slice(1), reader(stdin, dir, written), dir);
   const post = parseGh(args);
   if (!post) return [];
+  // gh expands a glob among a release's assets only when it runs, past files the command may make first.
   return [
-    ...postNames(post).map(([where, text]) => ({ where, kind: post.kind, text, cwd: dir, name: true })),
+    ...postNames(post, (pattern) => [unknown(pattern)]).map(([where, text]) => ({
+      where,
+      kind: post.kind,
+      text,
+      cwd: dir,
+      name: true,
+    })),
     ...postTexts(post, reader(stdin, dir, written)).map(([where, text]) => ({ where, kind: post.kind, text, cwd: dir })),
   ];
 }

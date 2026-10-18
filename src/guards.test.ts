@@ -1167,6 +1167,52 @@ test("the gh shim checks the names a post gives as branch names are read, and le
   assert.equal(gh(["repo", "rename", "-R", `example/${TERM}`, "clean"]).status, 3);
 });
 
+// The scratch git config's user.email is example@example.com.
+test("the gh shim checks a merge commit's author email as an address in a commit", () => {
+  const { gh, cwd, called } = shimSetup();
+  writeFileSync(join(cwd, ".second-read.toml"), 'allowed_emails = ["*@example.com"]\n');
+  for (const args of [["--author-email", "example@example.com"], ["-sA", "example@example.com"]]) {
+    const own = gh(["pr", "merge", "5", ...args]);
+    assert.equal(own.status, 1, args.join(" "));
+    assert.match(own.stderr, /1 finding in the author email of this merge commit\. .*\n {2}1:1 +your email/);
+  }
+  const outside = gh(["pr", "merge", "5", "--author-email=someone@mail-example.co"]);
+  assert.equal(outside.status, 1);
+  assert.match(outside.stderr, /1:1 +email +"someone@mail-example\.co"/);
+  assert.ok(!called());
+  assert.equal(gh(["pr", "merge", "5", "-A", "12345+example@users.noreply.github.com"]).status, 3);
+  assert.equal(gh(["pr", "merge", "5", "-A", "someone@example.com"]).status, 3);
+});
+
+test("the gh shim checks each release asset's file name and label", () => {
+  const { gh, cwd, called } = shimSetup();
+  mkdirSync(join(cwd, "dist", TERM), { recursive: true });
+  for (const file of ["app.tgz", `${TERM}.tgz`, `.${TERM}`, `${TERM}/app.tgz`]) writeFileSync(join(cwd, "dist", file), "");
+  const refused: [string[], string][] = [
+    [["release", "create", "v1", `dist/app.tgz#Port ${TERM}`], "the label of an asset of this release"],
+    [["release", "upload", "v1", `dist/app.tgz#Port ${TERM}`], "the label of an asset of this release"],
+    [["release", "create", "v1", `dist/${TERM}.tgz`], "the file name of an asset of this release"],
+    [["release", "upload", "--clobber", "v1", `dist/${TERM}.tgz`], "the file name of an asset of this release"],
+    // A labeled asset's file name is in its download URL.
+    [["release", "create", "v1", `dist/${TERM}.tgz#Build`], "the file name of an asset of this release"],
+    // gh expands an asset without a label as a glob, dot files and all.
+    [["release", "upload", "v1", "dist/*.tgz"], "the file name of an asset of this release"],
+    [["release", "upload", "v1", "dist/.*"], "the file name of an asset of this release"],
+    [["release", "upload", "v1", "dist/[.e]*"], "the file name of an asset of this release"],
+  ];
+  for (const [args, where] of refused) {
+    const result = gh(args);
+    assert.equal(result.status, 1, args.join(" "));
+    assert.match(result.stderr, new RegExp(`${where}[.:].*\\n {2}1:\\d+ +private term`), args.join(" "));
+  }
+  assert.ok(!called());
+  // An asset is uploaded under its own name, not its path, and a labeled one is never expanded.
+  assert.equal(gh(["release", "upload", "v1", `dist/${TERM}/app.tgz`]).status, 3);
+  assert.equal(gh(["release", "upload", "v1", "dist/app.*"]).status, 3);
+  assert.equal(gh(["release", "upload", "v1", "dist/*.tgz#Build"]).status, 3);
+  assert.equal(gh(["release", "create", "v1", "dist/app.tgz#App for Linux", "-t", "Version 1"]).status, 3);
+});
+
 test("the gh shim runs the real gh with the same arguments and input, and returns its exit code", () => {
   const { gh, args, stdin } = shimSetup();
   const argv = ["pr", "create", "--title", "Add the guards (#2)", "--body-file", "-", "--draft"];
