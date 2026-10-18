@@ -11,7 +11,8 @@ revisions, and a commit is public until the history is rewritten.
 second-read reads what's about to go out and stops it when it finds something private. It doesn't rewrite your text.
 It refuses, names what it found, and leaves the fix to you or your agent.
 
-> **Status:** early. The check and the git and `gh` guards run; the agent adapters and sweep are planned.
+> **Status:** early. The check, the git and `gh` guards and the Claude Code plugin run; the model check, other agent
+> adapters and the sweep are planned.
 > [PLAN.md](./PLAN.md) is the design.
 
 ## What it checks
@@ -125,6 +126,51 @@ githooks(5) lists, except `push-to-checkout`. git runs `reference-transaction` a
 they run only if the repository had them when you installed; install again after adding one. `hooks uninstall` puts
 `core.hooksPath` back. Running the repository's own setup step again, if it sets `core.hooksPath`, turns the guards
 off until you install them again.
+
+## The Claude Code plugin
+
+The plugin checks what Claude Code is about to post, before the tool call runs. When it finds something, it denies
+the call and gives Claude the report as the reason, so Claude can fix the text and try again. It needs Node 22.18 or
+newer on `PATH`, and it reads the same config files as the guards.
+
+1. Add this repository as a plugin marketplace:
+
+   ```sh
+   claude plugin marketplace add deanbot/second-read
+   ```
+
+2. Install the plugin:
+
+   ```sh
+   claude plugin install second-read@second-read
+   ```
+
+3. Check that it's installed and enabled:
+
+   ```sh
+   claude plugin list
+   ```
+
+It checks:
+
+- **Bash commands that post through `gh`:** the same `gh issue` and `gh pr` commands as the shim, and `gh api` calls
+  that send fields (`-f`, `-F`, including `@file`) or an `--input` body, unless they're `GET`. A GraphQL query
+  is checked when it's a mutation.
+- **`git commit` and `git tag` messages**, from `-m`, `-F` and `--trailer`. What a push sends is the `pre-push`
+  hook's to check.
+- **GitHub tools from MCP servers:** any tool with `github` in its name, in any case, apart from the ones that only
+  read (`get_`, `list_`, `search_`, `_read`). Every string it's given is checked, except `owner` and `repo`. A
+  file's contents are checked like the lines a push adds, so `exempt_files` applies to them.
+
+A body can come from a heredoc (`--body "$(cat <<'EOF' … EOF)"`), a here-string, a file, or `cat`, `echo` or
+`printf` piped in. A body the shell fills in only when the command runs, such as `--body "$BODY"`, can't be read
+beforehand, so the call is denied. Put the text in the command, or in a file and pass its path.
+
+The plugin never approves a call. A clean post goes on to Claude Code's usual permission check. If the hook itself
+fails or times out, the call is denied.
+
+A setup script can tell whether the plugin is in place with `claude plugin list --json`, which lists it as
+`"id": "second-read@second-read"` with `"enabled": true`.
 
 ## License
 
