@@ -115,6 +115,7 @@ test("rules join both allowlists and take terms and allowed names from the user 
     allowedEmails: ["b", "e"],
     allowedPaths: ["c", "f"],
     allowedNames: ["g"],
+    userAllowedEmails: ["b"],
   });
 });
 

@@ -150,6 +150,7 @@ export function mergeRules(user: UserConfig, repo: Allowlists | undefined): Rule
     allowedEmails: [...user.allowedEmails, ...(repo?.allowedEmails ?? [])],
     allowedPaths: [...user.allowedPaths, ...(repo?.allowedPaths ?? [])],
     allowedNames: user.allowedNames,
+    userAllowedEmails: user.allowedEmails,
   };
 }
 
@@ -170,6 +171,7 @@ allowed_words = []
 allowed_names = []
 
 # Email addresses that are fine to post. "*" matches any run of characters, as in "*@example.com".
+# Your own address, git's user.email, is allowed only when it's written out here in full.
 allowed_emails = []
 
 # Paths that are fine to post, such as "~/.config/some-tool".

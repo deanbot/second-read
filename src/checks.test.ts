@@ -7,9 +7,17 @@ const identity: Identity = {
   home: "/Users/example",
   host: "example-laptop.local",
   tempDirs: ["/var/folders/zz/example0000/T/"],
+  emails: [],
 };
 
-const noRules: Rules = { terms: [], allowedWords: [], allowedEmails: [], allowedPaths: [], allowedNames: [] };
+const noRules: Rules = {
+  terms: [],
+  allowedWords: [],
+  allowedEmails: [],
+  allowedPaths: [],
+  allowedNames: [],
+  userAllowedEmails: [],
+};
 
 function found(text: string, rules: Partial<Rules> = {}, who: Identity = identity): [string, string][] {
   return check(text, { identity: who, rules: { ...noRules, ...rules } }).map((f) => [
@@ -131,6 +139,43 @@ test("noreply addresses in commit trailers are allowed", () => {
   assert.deepEqual(found("noreply.desk@corp.co"), [["email", "noreply.desk@corp.co"]]);
 });
 
+test("the user's own address is found whatever a repository allows", () => {
+  const who = { ...identity, emails: ["Someone.Example@mail-example.co.uk", "work@example.com"] };
+  const repo = { allowedEmails: ["*@*.co.uk", "*@mail-example.co.uk"] };
+  assert.deepEqual(found("Mail someone.example@mail-example.co.uk or other@mail-example.co.uk", repo, who), [
+    ["your email", "someone.example@mail-example.co.uk"],
+  ]);
+  // The default allowlist takes in example.com, but not the user's own address there.
+  assert.deepEqual(found("Mail work@example.com or other@example.com", {}, who), [["your email", "work@example.com"]]);
+  assert.deepEqual(found("ＷＯＲＫ＠example.com and wo​rk@example.com", {}, who), [
+    ["your email", "ＷＯＲＫ＠example.com"],
+    ["your email", "wo​rk@example.com"],
+  ]);
+  // Only the whole address: a longer one that holds it is someone else's.
+  assert.deepEqual(found("a.work@example.com and work@example.com.au and xwork@example.com", {}, who), [
+    ["email", "work@example.com.au"],
+  ]);
+});
+
+test("the user's own noreply address isn't checked", () => {
+  const who = { ...identity, emails: ["1234+example@users.noreply.github.com", "noreply@mail-example.co"] };
+  assert.deepEqual(found("Signed-off-by: Example <1234+example@users.noreply.github.com>", {}, who), [
+    ["account name", "Example"],
+  ]);
+  assert.deepEqual(found("noreply@mail-example.co", {}, who), []);
+});
+
+test("only the user's own file allows their address, and only by naming it", () => {
+  const who = { ...identity, emails: ["work@mail-example.co"] };
+  const text = "Signed-off-by: A <work@mail-example.co>";
+  const repo = { allowedEmails: ["work@mail-example.co"] };
+  assert.deepEqual(found(text, repo, who), [["your email", "work@mail-example.co"]]);
+  assert.deepEqual(found(text, { ...repo, userAllowedEmails: ["*@mail-example.co"] }, who), [
+    ["your email", "work@mail-example.co"],
+  ]);
+  assert.deepEqual(found(text, { ...repo, userAllowedEmails: ["Work@Mail-Example.co"] }, who), []);
+});
+
 test("a name or word inside an allowed email or path isn't a finding, but a private term is", () => {
   assert.deepEqual(found("Example <1234+example@users.noreply.github.com>"), [["account name", "Example"]]);
   assert.deepEqual(found("billing@example.com and ~/.config/example-app"), []);
@@ -215,18 +260,21 @@ test("private terms, matched however they're written", () => {
   ]);
 });
 
-test("checkTerms finds only private terms, even inside a path or an email", () => {
+test("checkTerms finds only private terms and the user's own addresses, even inside a path or an email", () => {
   const text =
     "Paid plan, ~/notes, /tmp/x and someone@corp.co\nin /Users/example/ExamplePrivateProject/x\n" +
-    "and example-private-project@corp.co\n";
+    "and example-private-project@corp.co, to work@mail-example.co\n";
+  const rules = { ...noRules, terms: ["example-private-project"] };
+  const who = { ...identity, emails: ["work@mail-example.co"] };
   assert.deepEqual(
-    checkTerms(text, ["example-private-project"]).map((f) => [f.category, f.line, f.column, f.text]),
+    checkTerms(text, { identity: who, rules }).map((f) => [f.category, f.line, f.column, f.text]),
     [
       ["private term", 2, 19, "ExamplePrivateProject"],
       ["private term", 3, 5, "example-private-project"],
+      ["your email", 3, 41, "work@mail-example.co"],
     ],
   );
-  assert.deepEqual(checkTerms(text, []), []);
+  assert.deepEqual(checkTerms(text, { identity, rules: noRules }), []);
 });
 
 test("findings report line, column and text from the original input", () => {

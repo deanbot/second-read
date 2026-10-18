@@ -18,7 +18,8 @@ It refuses, names what it found, and leaves the fix to you or your agent.
 
 - **Paths on your machine:** anything under your home folder, temporary and scratch folders.
 - **Who you are on this machine:** your account name, your machine's name and email addresses, apart from the
-  ones you allow (such as GitHub's `noreply` address).
+  ones you allow (such as GitHub's `noreply` address). Your own address, git's `user.email`, is checked whatever a
+  repository allows.
 - **Money and accounts:** plans, billing, payments, spending, usage limits, what you will or won't pay for, and
   credentials.
 - **Your own list of private words:** project, folder, character or client names, in a file on your machine that is
@@ -74,7 +75,12 @@ A repository can check in a `.second-read.toml` with the same `allowed_*` keys, 
 your machine there would post it. It can't hold `terms`, and it's an error if it names one of your private terms.
 Since anyone who can change the repository can change it, it also can't switch a whole check off: `allowed_paths`
 can't take in all of `~` or a temp folder, and each `allowed_emails` pattern needs a fixed domain (`*@example.com`
-or `*@*.example.com`, not `*@*` or `*@*.com`). Your own file can allow anything.
+or `*@*.example.com`, not `*@*` or `*@*.com`). Your own file has none of these limits.
+
+A pattern with a fixed domain can still take in a lot, such as `*@*.co.uk`, or `*@gmail.com` and everyone there. So
+your own addresses, each `user.email` git has, are checked whatever a repository allows, unless one is a noreply
+address. Your own file allows one only by naming it exactly, as `git commit -s` needs: a pattern such as
+`*@gmail.com` is for other people's addresses, and doesn't take in yours.
 
 A repository whose code or tests hold paths, emails or money words on purpose can list those files in its
 `.second-read.toml`:

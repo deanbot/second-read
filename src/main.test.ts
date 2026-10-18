@@ -25,7 +25,7 @@ async function run(argv: string[], stdin = "", setup?: (config: string, cwd: str
     env: { SECOND_READ_CONFIG_DIR: config },
     platform: "linux",
     cwd,
-    identity: () => ({ user: "example", home: "/home/example", host: "example-box", tempDirs: [] }),
+    identity: () => ({ user: "example", home: "/home/example", host: "example-box", tempDirs: [], emails: [] }),
     command: ["node", "cli.js"],
     readStdin: async () => Buffer.from(stdin),
     out: (text) => (out += text),
@@ -116,7 +116,7 @@ test("a failure reading stdin exits 2", async () => {
     env: { SECOND_READ_CONFIG_DIR: join(scratch, "no-config") },
     platform: "linux",
     cwd: scratch,
-    identity: () => ({ user: "example", home: "/home/example", host: "example-box", tempDirs: [] }),
+    identity: () => ({ user: "example", home: "/home/example", host: "example-box", tempDirs: [], emails: [] }),
     command: ["node", "cli.js"],
     readStdin: async () => {
       throw new Error("stdin closed");

@@ -343,12 +343,12 @@ function checkName(name: string, identity: Identity, rules: Rules): Finding[] {
   return [...findings, ...quoted].sort((a, b) => a.start - b.start);
 }
 
-// An exempt file's added lines are checked for private terms only, which are never allowed anywhere. Messages and
-// tags are always checked in full.
+// An exempt file's added lines are checked for private terms and the user's own addresses only, which no
+// repository can allow. Messages and tags are always checked in full.
 function checkPushed(pushed: Pushed, identity: Identity, rules: Rules, exempt: (file: string) => boolean): Finding[] {
   const findings =
     pushed.kind === "added" && pushed.file !== undefined && exempt(pushed.file)
-      ? checkTerms(pushed.text, rules.terms)
+      ? checkTerms(pushed.text, { identity, rules })
       : check(pushed.text, { identity, rules, kind: "commit" });
   // Added lines are reported by their line number in the file.
   return pushed.lines ? findings.map((f) => ({ ...f, line: pushed.lines![f.line - 1] ?? f.line })) : findings;
