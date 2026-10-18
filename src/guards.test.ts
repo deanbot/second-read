@@ -361,6 +361,34 @@ test("commit-msg refuses a message with a finding and prints the report", () => 
   assert.equal(commit(dir, "Port the parser (#2)").status, 0);
 });
 
+// The scratch git config's user.email is example@example.com, which the default allowlist takes in.
+test("commit-msg refuses the user's own address, unless their own file names it", () => {
+  const dir = installed();
+  writeFileSync(join(dir, ".second-read.toml"), 'allowed_emails = ["*@example.com"]\n');
+  const signed = run("git", ["commit", "-q", "--allow-empty", "-s", "-m", "Sign off (#14)"], dir);
+  assert.equal(signed.status, 1);
+  assert.match(signed.stderr, /3:25 +your email +"example@example\.com"/);
+
+  // An address set in the repository doesn't hide the global one.
+  git(dir, "config", "user.email", "work@mail-example.co");
+  const local = commit(dir, "Ask example@example.com or work@mail-example.co (#14)");
+  assert.equal(local.status, 1);
+  assert.match(local.stderr, /2 findings in this commit message/);
+
+  const own = fresh("config");
+  writeFileSync(join(own, "config.toml"), 'allowed_emails = ["example@example.com", "*@mail-example.co"]\n');
+  const allowed = run("git", ["commit", "-q", "--allow-empty", "-s", "-m", "Sign off (#14)"], dir, "", {
+    SECOND_READ_CONFIG_DIR: own,
+  });
+  assert.equal(allowed.status, 1);
+  assert.match(allowed.stderr, /1 finding in this commit message.*\n {2}3:\d+ +your email +"work@mail-example\.co"/);
+  git(dir, "config", "--unset", "user.email");
+  const passed = run("git", ["commit", "-q", "--allow-empty", "-s", "-m", "Sign off (#14)"], dir, "", {
+    SECOND_READ_CONFIG_DIR: own,
+  });
+  assert.equal(passed.status, 0, passed.stderr);
+});
+
 test("commit-msg checks what git will commit: no comment lines, nothing below the scissors", () => {
   const dir = installed();
   const editor = join(fresh("editor"), "editor");
@@ -921,6 +949,14 @@ test("pre-push checks an exempt file's added lines for private terms only", () =
   const term = push(dir, "origin", "main");
   assert.equal(term.status, 1);
   assert.match(term.stderr, /1 finding in the lines commit \w+ adds to src\/b\.test\.ts\. .*\n {2}1:19 +private term/);
+  git(dir, "reset", "-q", "--hard", "HEAD~1");
+
+  // So is the user's own address.
+  const own = { "src/b.test.ts": 'const to = "example@example.com";\n' };
+  assert.equal(commit(dir, "Add more tests (#14)", own).status, 0);
+  const email = push(dir, "origin", "main");
+  assert.equal(email.status, 1);
+  assert.match(email.stderr, /1 finding in the lines commit \w+ adds to src\/b\.test\.ts\. .*\n {2}1:13 +your email/);
   git(dir, "reset", "-q", "--hard", "HEAD~1");
 
   // Messages are checked in full, whatever files the commit touches.

@@ -38,7 +38,9 @@ So the check has to run **before** a post goes out, and it can't rely on the per
   - temporary and scratch folders;
   - the account name, the machine name, and email addresses outside the allowlist. A machine name a system gives
     by default, or a word for the kind of computer, isn't flagged. Only the user's own file can allow any other
-    name, since a repository that names it posts it;
+    name, since a repository that names it posts it. The user's own addresses, git's `user.email` unless it's a
+    noreply address, are checked whatever a repository allows, even in exempt files; only the user's own file can
+    allow one, by naming it exactly;
   - money and accounts: words for plans, billing, payments, subscriptions, spending and usage limits, and amounts
     of money. These are the most likely to give false alarms in some repositories, so a repository's allowlist
     can switch off single words;

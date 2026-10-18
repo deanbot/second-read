@@ -9,6 +9,7 @@ export type Category =
   | "account name"
   | "machine name"
   | "email"
+  | "your email"
   | "money"
   | "private term";
 
@@ -18,6 +19,8 @@ export interface Identity {
   home: string;
   host: string;
   tempDirs: string[];
+  // The user's own addresses, as git's user.email gives them.
+  emails: string[];
 }
 
 export interface Rules {
@@ -27,6 +30,8 @@ export interface Rules {
   allowedPaths: string[];
   // From the user's own file only.
   allowedNames: string[];
+  // The user's own allowed_emails, the only ones that can allow one of their own addresses.
+  userAllowedEmails: string[];
 }
 
 export interface CheckOptions {
@@ -217,25 +222,50 @@ export function check(input: string, options: CheckOptions): Finding[] {
   }
   if (!allowedWords.has("amounts")) spans.push(...foldedSpans(folded, AMOUNT, "money", allowedWords, "amounts"));
 
-  const shown = outsideAllowed(spans, allowed);
-
-  // Private terms are never allowed, wherever they appear.
-  shown.push(...termSpans(folded, rules.terms));
+  // Private terms and the user's own addresses are never allowed by a repository, wherever they appear. They come
+  // first, so the user's address is reported as theirs rather than as an email outside the allowlist.
+  const shown = [...neverAllowed(folded, options), ...outsideAllowed(spans, allowed)];
 
   return toFindings(input, outermost(shown));
 }
 
-// Only the private terms, for text whose other findings are the repository's own business, such as an exempt
-// file's added lines. A term inside a path or an email is found here, where check reports the wider span.
-export function checkTerms(input: string, terms: string[]): Finding[] {
-  return toFindings(input, outermost(termSpans(fold(input), terms)));
+// Only the private terms and the user's own addresses, for text whose other findings are the repository's own
+// business, such as an exempt file's added lines. A term inside a path or an email is found here, where check
+// reports the wider span.
+export function checkTerms(input: string, options: CheckOptions): Finding[] {
+  return toFindings(input, outermost(neverAllowed(fold(input), options)));
 }
 
-function termSpans(folded: Folded, terms: string[]): Span[] {
-  return terms.flatMap((term) => {
+function neverAllowed(folded: Folded, { identity, rules }: CheckOptions): Span[] {
+  const terms = rules.terms.flatMap((term) => {
     const re = termPattern(term);
     return re ? foldedSpans(folded, re, "private term") : [];
   });
+  return [...terms, ...ownEmailSpans(folded, identity.emails, rules.userAllowedEmails)];
+}
+
+// The user's own addresses, whatever a repository allows: a pattern there such as "*@*.co.uk" or "*@gmail.com"
+// takes in theirs too. A noreply address is made to be posted. The user's own file allows one only by naming it
+// exactly, since a pattern there is for other people's addresses.
+function ownEmailSpans(folded: Folded, emails: string[], userAllowed: string[]): Span[] {
+  const allowed = new Set(userAllowed.map((e) => fold(e).text));
+  const own = new Set(emails.map((e) => fold(e.trim()).text).filter((e) => !isNoreply(e) && !allowed.has(e)));
+  if (own.size === 0) return [];
+  const spans: Span[] = [];
+  for (const m of folded.text.matchAll(EMAIL)) {
+    if (!own.has(m[0])) continue;
+    const [start, end] = originalSpan(folded, m.index, m.index + m[0].length);
+    spans.push({ category: "your email", start, end });
+  }
+  return spans;
+}
+
+const NOREPLY_DOMAINS = ["users.noreply.github.com", "users.noreply.gitlab.com"];
+
+function isNoreply(email: string): boolean {
+  const at = email.lastIndexOf("@");
+  const local = email.slice(0, at);
+  return local === "noreply" || local === "no-reply" || NOREPLY_DOMAINS.includes(email.slice(at + 1));
 }
 
 // An allowed path that takes in the whole home folder or a whole temp folder, which leaves that check nothing to do:

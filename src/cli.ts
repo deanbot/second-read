@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -16,7 +17,18 @@ function systemIdentity(): Identity {
   try {
     tempDirs.push(realpathSync(tempDirs[0]!));
   } catch {}
-  return { user, home: homedir(), host: hostname(), tempDirs };
+  return { user, home: homedir(), host: hostname(), tempDirs, emails: gitEmails() };
+}
+
+// Every user.email git uses here, from each config file it reads: one set in a repository doesn't hide the global
+// one. An address an includeIf sets for another folder isn't read.
+// No git, or no address, means none to check.
+function gitEmails(): string[] {
+  const result = spawnSync("git", ["config", "--get-all", "user.email"], { encoding: "utf8" });
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT" || result.status === 1) return [];
+  if (result.error) throw new Error(`can't run git: ${result.error.message}`);
+  if (result.status !== 0) throw new Error(`git config failed: ${result.stderr.trim()}`);
+  return result.stdout.split("\n").filter((e) => e.trim() !== "");
 }
 
 async function readStdin(): Promise<Buffer> {
