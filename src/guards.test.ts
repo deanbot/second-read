@@ -523,6 +523,118 @@ test("pre-push checks the message of an annotated tag, even on a commit the remo
   assert.equal(push(dir, "origin", "v2").status, 0);
 });
 
+test("pre-push checks the name a push gives each branch and tag on the remote", () => {
+  const dir = installed();
+  const remote = bareRemote(dir);
+  assert.equal(commit(dir, "Start (#11)").status, 0);
+  assert.equal(push(dir, "origin", "main").status, 0);
+
+  git(dir, "switch", "-q", "-c", `feature/${TERM}`);
+  const refused = push(dir, "origin", `feature/${TERM}`);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, new RegExp(`1 finding in the name of branch feature/${TERM}\\. .*\\n {2}1:9 +private term`));
+  assert.match(refused.stderr, /push the branch under a new name \(git branch -m\), and push again\./);
+  assert.equal(run("git", ["rev-parse", "--verify", "-q", `feature/${TERM}`], remote).status, 1);
+
+  // Only the remote name is sent.
+  const renamed = push(dir, "origin", "HEAD:feature/clean");
+  assert.equal(renamed.status, 0, renamed.stderr);
+
+  git(dir, "commit", "-q", "--allow-empty", "--no-verify", "-m", `More from ${TERM}`);
+  const both = push(dir, "origin", `feature/${TERM}`);
+  assert.equal(both.status, 1);
+  assert.match(both.stderr, /fix the commits, push the branch under a new name .*, and push again\./);
+
+  // A lightweight tag on a commit the remote has brings no commits, and its name is still checked.
+  git(dir, "tag", `${TERM}-v1`, "main");
+  const tag = push(dir, "origin", `${TERM}-v1`);
+  assert.equal(tag.status, 1);
+  assert.match(tag.stderr, new RegExp(`1 finding in the name of tag ${TERM}-v1\\.`));
+  assert.match(tag.stderr, /push the tag under a new name \(git tag <new name> <old name>\), and push again\./);
+
+  git(dir, "update-ref", `refs/notes/${TERM}`, "main");
+  const ref = push(dir, "origin", `refs/notes/${TERM}`);
+  assert.equal(ref.status, 1);
+  assert.match(ref.stderr, new RegExp(`the name of ref refs/notes/${TERM}\\.`));
+  assert.match(ref.stderr, /push the ref under a new name, and push again\./);
+
+  const mixed = push(dir, "origin", `feature/${TERM}`, `${TERM}-v1`);
+  assert.equal(mixed.status, 1);
+  assert.match(mixed.stderr, /push the refs under a new name \(git branch -m, or git tag <new name> <old name>\)/);
+});
+
+test("a name joined with hyphens or slashes is read with spaces for money phrases, and quoted as it is", () => {
+  const dir = installed();
+  bareRemote(dir);
+  assert.equal(commit(dir, "Start (#11)").status, 0);
+  const names: [string, number, string, string][] = [
+    ["paid-plan", 1, "plan", "paid-plan"],
+    ["fix/upgrade_my.plan", 5, "plan", "upgrade_my.plan"],
+    ["credit-card", 1, "card", "credit-card"],
+    ["usage-limits", 1, "usage limit", "usage-limits"],
+  ];
+  for (const [branch, column, word, text] of names) {
+    const refused = push(dir, "origin", `main:${branch}`);
+    assert.equal(refused.status, 1, branch);
+    assert.match(refused.stderr, new RegExp(`\\n {2}1:${column} +money \\(${word}\\) +"${text}"\\n`));
+  }
+});
+
+test("a branch whose name is already on the remote is refused on update, and can be deleted", () => {
+  const dir = installed();
+  const remote = bareRemote(dir);
+  git(dir, "switch", "-q", "-c", TERM);
+  assert.equal(commit(dir, "Start (#11)").status, 0);
+  assert.equal(run("git", ["push", "-q", "--no-verify", "origin", TERM], dir).status, 0);
+
+  assert.equal(commit(dir, "More (#11)").status, 0);
+  const refused = push(dir, "origin", TERM);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, new RegExp(`in the name of branch ${TERM}\\.`));
+
+  const deleted = push(dir, "origin", "--delete", TERM);
+  assert.equal(deleted.status, 0, deleted.stderr);
+  assert.equal(run("git", ["rev-parse", "--verify", "-q", TERM], remote).status, 1);
+});
+
+test("pre-push checks the name written in an annotated tag, whatever the remote calls it", () => {
+  const dir = installed();
+  bareRemote(dir);
+  assert.equal(commit(dir, "Release (#11)").status, 0);
+  git(dir, "tag", "-a", TERM, "-m", "First release (#11)");
+  const refused = push(dir, "origin", `refs/tags/${TERM}:refs/tags/v1`);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, new RegExp(`1 finding in the name written in tag ${TERM}\\.`));
+  const move = new RegExp(
+    String.raw`move the tag to a clean name \(git tag -a <new name> <commit>, then git tag -d <old name>\), ` +
+      String.raw`and push again\.`,
+  );
+  assert.match(refused.stderr, move);
+
+  // Rewriting it keeps the name, so it's refused again.
+  git(dir, "tag", "-f", "-a", TERM, "-m", "First release, again (#11)");
+  assert.match(push(dir, "origin", `refs/tags/${TERM}:refs/tags/v1`).stderr, move);
+
+  // A tag pushed under its own name is reported once, with the same fix.
+  const same = push(dir, "origin", TERM);
+  assert.equal(same.status, 1);
+  assert.match(same.stderr, new RegExp(`1 finding in the name of tag ${TERM}\\.`));
+  assert.match(same.stderr, move);
+
+  // A new tag takes a new message too, so a finding in both is one fix.
+  git(dir, "tag", "-f", "-a", TERM, "-m", `Ported from ${TERM}`);
+  const twice = push(dir, "origin", `refs/tags/${TERM}:refs/tags/v1`);
+  assert.equal(twice.status, 1);
+  assert.match(twice.stderr, /2 findings\. Nothing was changed; move the tag to a clean name .*, and push again\./);
+  assert.doesNotMatch(twice.stderr, /git tag -f -a/);
+
+  // Following the fix goes through.
+  git(dir, "tag", "-a", "v1", "HEAD", "-m", "First release (#11)");
+  git(dir, "tag", "-d", TERM);
+  const clean = push(dir, "origin", "v1");
+  assert.equal(clean.status, 0, clean.stderr);
+});
+
 test("pre-push passes git's input on to the hook it set aside", () => {
   const dir = repo();
   const log = join(fresh("log"), "log");
