@@ -105,9 +105,10 @@ export function exemptMatcher(globs: string[]): (file: string) => boolean {
   return (file) => patterns.some((re) => re.test(file));
 }
 
-// A glob made only of wildcards, such as "**", "*" or "**/*", which leaves pre-push no added lines to check.
+// A glob made only of wildcards, such as "**", "*", "**/*" or "**/?*", which leaves pre-push no added lines to check.
+// A folder of only "?" takes in names of that length, so it's narrower.
 export function isBlanketGlob(glob: string): boolean {
-  return globSegments(glob).every((segment) => /^\*+$/.test(segment));
+  return globSegments(glob).every((segment) => /^[*?]*\*[*?]*$/.test(segment));
 }
 
 function globSegments(glob: string): string[] {
