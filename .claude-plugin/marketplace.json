@@ -1,0 +1,16 @@
+{
+  "name": "second-read",
+  "description": "A privacy check on what Claude Code posts through git, gh and GitHub tools.",
+  "owner": {
+    "name": "Dean Verleger",
+    "url": "https://github.com/deanbot"
+  },
+  "plugins": [
+    {
+      "name": "second-read",
+      "description": "Checks what Claude Code posts through git, gh and GitHub tools for private details, and refuses the call when it finds one.",
+      "source": "./",
+      "category": "security"
+    }
+  ]
+}

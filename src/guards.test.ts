@@ -1056,6 +1056,12 @@ test("the gh shim refuses a post with a finding, and never runs gh", () => {
     ["pr", "comment", "5", "--body", `Port ${TERM}`],
     ["pr", "review", "5", "--comment", "-b", `Port ${TERM}`],
     ["issue", "-R", "example/repo", "create", "-t", `Port ${TERM}`],
+    ["issue", "close", "4", "--comment", `Port ${TERM}`],
+    ["issue", "reopen", "4", `-cPort ${TERM}`],
+    ["pr", "close", "5", "-d", "-c", `Port ${TERM}`],
+    ["pr", "reopen", "5", `--comment=Port ${TERM}`],
+    ["pr", "merge", "5", "--squash", "--subject", `Port ${TERM}`],
+    ["pr", "merge", "5", "-t", "Clean", "-b", `Port ${TERM}`],
   ];
   for (const args of cases) {
     const result = gh(args);

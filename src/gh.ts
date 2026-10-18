@@ -1,16 +1,13 @@
 import { accessSync, closeSync, constants, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
-import type { Kind } from "./checks.ts";
+import { KIND_NAMES, type Kind } from "./checks.ts";
 import { shQuote } from "./git.ts";
 
 export const SHIM_MARKER = "# Added by second-read: the gh shim.";
 
-const POSTS: Record<string, Record<string, Kind>> = {
-  issue: { create: "issue", new: "issue", edit: "issue", comment: "comment" },
-  pr: { create: "pr", new: "pr", edit: "pr", comment: "comment", review: "review" },
-};
+type Field = "title" | "body" | "bodyFile";
 
-const TEXT_FLAGS: Record<string, "title" | "body" | "bodyFile"> = {
+const TEXT_FLAGS: Record<string, Field> = {
   "--title": "title",
   "-t": "title",
   "--body": "body",
@@ -19,8 +16,55 @@ const TEXT_FLAGS: Record<string, "title" | "body" | "bodyFile"> = {
   "-F": "bodyFile",
 };
 
+// Closing or reopening with a comment posts the comment.
+const COMMENT_FLAGS: Record<string, Field> = { "--comment": "body", "-c": "body" };
+
+// A merge commit's message: its subject and body.
+const MERGE_FLAGS: Record<string, Field> = {
+  "--subject": "title",
+  "-t": "title",
+  "--body": "body",
+  "-b": "body",
+  "--body-file": "bodyFile",
+  "-F": "bodyFile",
+};
+
+interface Posting {
+  kind: Kind;
+  flags: Record<string, Field>;
+  noun?: string;
+  titleName?: string;
+}
+
+const text = (kind: Kind): Posting => ({ kind, flags: TEXT_FLAGS });
+const comment: Posting = { kind: "comment", flags: COMMENT_FLAGS };
+
+const POSTS: Record<string, Record<string, Posting>> = {
+  issue: {
+    create: text("issue"),
+    new: text("issue"),
+    edit: text("issue"),
+    comment: text("comment"),
+    close: comment,
+    reopen: comment,
+  },
+  pr: {
+    create: text("pr"),
+    new: text("pr"),
+    edit: text("pr"),
+    comment: text("comment"),
+    review: text("review"),
+    close: comment,
+    reopen: comment,
+    merge: { kind: "commit", flags: MERGE_FLAGS, noun: "this merge commit", titleName: "subject" },
+  },
+};
+
 export interface GhPost {
   kind: Kind;
+  // What the texts are called in a report.
+  noun: string;
+  titleName: string;
   title: string[];
   body: string[];
   bodyFiles: string[];
@@ -28,8 +72,24 @@ export interface GhPost {
 
 // The text a posting gh command sends, or undefined for any other command, which passes straight through.
 export function parseGh(args: string[]): GhPost | undefined {
+  // The command words come first, with only -R and its value among them.
   const words: string[] = [];
-  const post: Omit<GhPost, "kind"> = { title: [], body: [], bodyFiles: [] };
+  for (let i = 0; i < args.length && words.length < 2; i++) {
+    const arg = args[i]!;
+    if (arg === "--") break;
+    if (arg === "-R" || arg === "--repo") i++;
+    else if (!arg.startsWith("-")) words.push(arg);
+  }
+  const posting = POSTS[words[0] ?? ""]?.[words[1] ?? ""];
+  if (posting === undefined) return undefined;
+  const post: GhPost = {
+    kind: posting.kind,
+    noun: posting.noun ?? KIND_NAMES[posting.kind],
+    titleName: posting.titleName ?? "title",
+    title: [],
+    body: [],
+    bodyFiles: [],
+  };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === "--") break;
@@ -48,18 +108,29 @@ export function parseGh(args: string[]): GhPost | undefined {
       name = arg.slice(0, 2);
       if (arg.length > 2) value = arg.slice(arg[2] === "=" ? 3 : 2);
     } else {
-      words.push(arg);
       continue;
     }
-    const field = TEXT_FLAGS[name];
+    const field = posting.flags[name];
     if (field === undefined) continue;
     if (value === undefined) value = args[++i];
     if (value === undefined) continue;
     if (field === "bodyFile") post.bodyFiles.push(value);
     else post[field].push(value);
   }
-  const kind = POSTS[words[0] ?? ""]?.[words[1] ?? ""];
-  return kind === undefined ? undefined : { kind, ...post };
+  return post;
+}
+
+// Each text a posting gh command sends, with where it goes. `read` gives a body file's text, "-" being stdin.
+export function postTexts(post: GhPost, read: (file: string) => string): [string, string][] {
+  const noun = post.noun;
+  return [
+    ...post.title.map((t): [string, string] => [`the ${post.titleName} of ${noun}`, t]),
+    ...post.body.map((t): [string, string] => [`the body of ${noun}`, t]),
+    ...post.bodyFiles.map((f): [string, string] => [
+      f === "-" ? `the body of ${noun}` : `the body of ${noun}, from ${f}`,
+      read(f),
+    ]),
+  ];
 }
 
 export function shimScript(command: string[]): string {
