@@ -1009,6 +1009,10 @@ test("the check and the gh shim read an exempt file in full", () => {
   const refused = gh(["pr", "create", "--title", "Tests (#9)", "--body-file", "src/body.md"]);
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /5 findings in the body of this pull request, from src\/body\.md/);
+  // A gist is a post of its own, so the files it uploads are never exempt.
+  const gist = gh(["gist", "create", "src/body.md"]);
+  assert.equal(gist.status, 1);
+  assert.match(gist.stderr, /5 findings in the contents of this gist, from src\/body\.md/);
   assert.ok(!called());
 });
 
@@ -1062,6 +1066,17 @@ test("the gh shim refuses a post with a finding, and never runs gh", () => {
     ["pr", "reopen", "5", `--comment=Port ${TERM}`],
     ["pr", "merge", "5", "--squash", "--subject", `Port ${TERM}`],
     ["pr", "merge", "5", "-t", "Clean", "-b", `Port ${TERM}`],
+    ["release", "create", "v1", "--title", `Port ${TERM}`],
+    ["release", "new", "v1", "-d", "-n", `Port ${TERM}`],
+    ["release", "edit", "v1", `--notes=Port ${TERM}`],
+    ["gist", "create", "--public", "-d", `Port ${TERM}`],
+    ["gist", "edit", "abc123", `--desc=Port ${TERM}`],
+    ["label", "create", TERM, "--color", "ff0000"],
+    ["label", "create", "-c", "ff0000", "-f", "bug", "--description", `Port ${TERM}`],
+    ["label", "edit", "bug", "--name", TERM],
+    ["label", "edit", "bug", `-dPort ${TERM}`],
+    ["repo", "create", "example/repo", "--private", "-d", `Port ${TERM}`],
+    ["repo", "edit", `--description=Port ${TERM}`],
   ];
   for (const args of cases) {
     const result = gh(args);
@@ -1090,6 +1105,29 @@ test("the gh shim checks body files and stdin bodies", () => {
   assert.equal(fromStdin.status, 1);
   assert.match(fromStdin.stderr, /3:6 +private term/);
   assert.ok(!called());
+});
+
+test("the gh shim checks release notes files and the files a gist uploads", () => {
+  const { gh, cwd, called } = shimSetup();
+  writeFileSync(join(cwd, "notes.md"), `Port ${TERM}\n`);
+  const notes = gh(["release", "create", "v1", "-F", "notes.md"]);
+  assert.equal(notes.status, 1);
+  assert.match(notes.stderr, /in the notes of this release, from notes\.md/);
+  writeFileSync(join(cwd, "clean.md"), "Clean\n");
+  const files = gh(["gist", "create", "clean.md", "notes.md"]);
+  assert.equal(files.status, 1);
+  assert.match(files.stderr, /in the contents of this gist, from notes\.md/);
+  const added = gh(["gist", "edit", "abc123", "--add", "notes.md"]);
+  assert.equal(added.status, 1);
+  assert.match(added.stderr, /in the contents of this gist, from notes\.md/);
+  for (const args of [["gist", "create"], ["gist", "create", "-"], ["gist", "edit", "abc123", "-a", "new.md", "-"]]) {
+    const piped = gh(args, `Port ${TERM}\n`);
+    assert.equal(piped.status, 1, args.join(" "));
+    assert.match(piped.stderr, /1 finding in the contents of this gist\. .*\n {2}1:6 +private term/, args.join(" "));
+  }
+  assert.ok(!called());
+  assert.equal(gh(["gist", "create", "clean.md", "-d", "Clean"]).status, 3);
+  assert.equal(gh(["label", "create", "bug", "-d", "Something is broken"]).status, 3);
 });
 
 test("the gh shim runs the real gh with the same arguments and input, and returns its exit code", () => {

@@ -55,6 +55,7 @@ export interface Io {
   // How to run this CLI again (the node binary and the script), for the hooks and the shim to call.
   command: string[];
   readStdin: () => Promise<Buffer>;
+  stdinIsTTY?: boolean;
   out: (text: string) => void;
   err: (text: string) => void;
 }
@@ -406,7 +407,7 @@ async function runShim(io: Io, args: string[]): Promise<number> {
   let input: Buffer | undefined;
   if (post) {
     const { identity, rules } = loadRules(io);
-    if (post.bodyFiles.includes("-")) input = await io.readStdin();
+    if (post.bodyFiles.includes("-") && !(post.stdinIfPiped && io.stdinIsTTY)) input = await io.readStdin();
     const stdin = input?.toString("utf8") ?? "";
     const texts = postTexts(post, (file) => (file === "-" ? stdin : readFileSync(resolve(io.cwd, file), "utf8")));
     const sections = texts

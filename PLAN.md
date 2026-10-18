@@ -65,7 +65,9 @@ So the check has to run **before** a post goes out, and it can't rely on the per
   repository, alongside any hooks already there.
 - **`gh` shim:** a `gh` placed ahead of the real one on `PATH`. For `issue|pr create|edit|comment` and
   `pr review`, it checks `--title`, `--body`, `--body-file` and stdin bodies, then runs the real `gh` unchanged.
-  It checks the `--comment` of `issue|pr close|reopen` and the merge commit message of `pr merge` too.
+  It checks the `--comment` of `issue|pr close|reopen` and the merge commit message of `pr merge` too, and for
+  `release`, `gist`, `label` and `repo` `create|edit`, the title, notes, description, label name and gist files.
+  A gist's files are checked in full, since a gist is a new post, not lines added to the repository's files.
   Every other command passes straight through.
 
 These catch every agent that posts through `git` and `gh`, and the user too.

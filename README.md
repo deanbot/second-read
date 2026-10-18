@@ -36,7 +36,8 @@ It isn't a secrets scanner. Tools like gitleaks find keys and tokens, and second
 ## Where it runs
 
 - **git hooks:** commit messages, and the lines a push adds.
-- **A `gh` shim:** the title and body of `gh issue`, `gh pr` and comment commands, before the real `gh` sends them.
+- **A `gh` shim:** the text of issues, pull requests, comments, releases, gists, labels and repository
+  descriptions, before the real `gh` sends it.
 - **Agent adapters**, for posts that don't go through `git` or `gh`, such as a GitHub tool an agent calls directly.
   Claude Code comes first. Other agents follow, each written from its tool's own hook docs.
 - **A sweep** of what's already posted to a repository, edit histories included.
@@ -94,7 +95,7 @@ exempt_files = ["src/**/*.test.ts", "fixtures/"]
 repository: `*` and `?` stay within one folder, `**` takes in any number of them, and a trailing `/` takes in a
 whole folder. A glob made only of wildcards and dots, such as `**` or `**/*.*`, is an error, since it takes in nearly
 every file; one for dotfiles, such as `**/.*`, is fine. Commit and tag messages, branch and tag names, and everything
-the `gh` shim sends are still checked in full.
+the `gh` shim sends are still checked in full, a gist's files included: a gist is a post of its own.
 
 ## The guards
 
@@ -114,8 +115,10 @@ second-read shim install     # writes a gh shim, and says which folder to put ah
   `SECOND_READ_ALLOWLIST_REVIEWED="<id>"`. An id covers only that change, so a later one is refused again.
 - **The `gh` shim** checks `--title`, `--body`, `--body-file` and a body read from stdin, for `gh issue` and
   `gh pr` `create`, `edit` and `comment`, and `gh pr review`. It also checks the `--comment` that `close` and
-  `reopen` leave, and the `--subject` and body of `gh pr merge`'s merge commit. Then it runs the real `gh` with the
-  same arguments and input. Every other command, `gh api` included, passes straight through.
+  `reopen` leave, and the `--subject` and body of `gh pr merge`'s merge commit. It checks a release's title and
+  notes, a gist's description and the files it uploads, stdin included, a label's name and description, and a
+  repository's description. Then it runs the real `gh` with the same arguments and input. Every other command,
+  `gh api` included, passes straight through.
 
 Each guard refuses on a finding, and also when the check itself fails. A hook that was already in place is set aside
 and still runs after the check; `second-read hooks uninstall` removes only second-read's hooks and puts it back. The
@@ -154,9 +157,8 @@ the call and gives Claude the report as the reason, so Claude can fix the text a
 
 It checks:
 
-- **Bash commands that post through `gh`:** the same `gh issue` and `gh pr` commands as the shim, behind `env`,
-  `sudo` and the like, and `gh api` calls
-  that send fields (`-f`, `-F`, including `@file`) or an `--input` body, unless they're `GET`. A GraphQL query
+- **Bash commands that post through `gh`:** the same `gh` commands as the shim, behind `env`, `sudo` and the like,
+  and `gh api` calls that send fields (`-f`, `-F`, including `@file`) or an `--input` body, unless they're `GET`. A GraphQL query
   is checked when it's a mutation.
 - **`git commit` and `git tag` messages**, from `-m`, `-F` and `--trailer`. What a push sends is the `pre-push`
   hook's to check.

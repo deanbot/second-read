@@ -127,6 +127,26 @@ test("a failure reading stdin exits 2", async () => {
   assert.equal(await main(io), 2);
 });
 
+test("the gh shim reads no stdin from a terminal for a gist with no files, as gh doesn't", async () => {
+  const io = (stdinIsTTY: boolean): Io => ({
+    argv: ["gh-shim", join(scratch, "shim", "gh"), "gist", "create", "--desc", "Clean"],
+    env: { SECOND_READ_CONFIG_DIR: join(scratch, "no-config"), PATH: "" },
+    platform: "linux",
+    cwd: scratch,
+    identity: () => ({ user: "example", home: "/home/example", host: "example-box", tempDirs: [], emails: [] }),
+    command: ["node", "cli.js"],
+    readStdin: async () => {
+      throw new Error("stdin read");
+    },
+    stdinIsTTY,
+    out: () => {},
+    err: () => {},
+  });
+  // With no real gh on PATH, a shim that got past the check exits 127.
+  assert.equal(await main(io(true)), 127);
+  assert.equal(await main(io(false)), 2);
+});
+
 test("init writes the user file with comments and no terms, and says how to add one", async () => {
   const { code, out, config } = await run(["init"]);
   const path = join(config, "config.toml");

@@ -92,6 +92,27 @@ test("the hook checks comments left by close and reopen, merge commit messages, 
   assert.match(hook(bash(`sudo gh pr comment 5 --body "${LEAKY}"`)).reason, /private term/);
 });
 
+test("the hook checks gh release, gist, label and repo posts", () => {
+  assert.match(hook(bash(`gh release create v1 --title "${LEAKY}"`)).reason, /title of this release/);
+  assert.match(hook(bash(`gh release edit v1 -n "${LEAKY}"`)).reason, /notes of this release/);
+  assert.match(hook(bash(`gh gist create -d "${LEAKY}" --public`)).reason, /description of this gist/);
+  assert.match(hook(bash(`echo "${LEAKY}" | gh gist create -f notes.md`)).reason, /contents of this gist/);
+  assert.match(hook(bash(`gh label create ${TERM} --color ff0000`)).reason, /name of this label/);
+  assert.match(hook(bash(`gh label edit bug --description "${LEAKY}"`)).reason, /description of this label/);
+  assert.match(hook(bash(`gh repo create example/repo -d "${LEAKY}"`)).reason, /description of this repository/);
+  assert.match(hook(bash(`gh repo edit --description "${LEAKY}"`)).reason, /description of this repository/);
+  assert.equal(hook(bash(`gh release create v1 -t "Version 1" -n "${CLEAN}"`)).denied, false);
+  assert.equal(hook(bash(`gh label create bug -c ff0000 -d "${CLEAN}"`)).denied, false);
+  assert.match(hook(bash(`cat notes.md | gh gist create`)).reason, /can't check what this command posts/);
+});
+
+test("the hook checks the files a gist uploads in full, even exempt ones", () => {
+  const fixture = 'const saved = "~/notes/today.md";\n';
+  writeFileSync(join(repo, "src", "cache.test.ts"), fixture);
+  assert.match(hook(bash(`gh gist create src/cache.test.ts`)).reason, /home path/);
+  assert.match(hook(bash(`gh gist edit abc123 --add src/cache.test.ts`)).reason, /home path/);
+});
+
 test("the hook refuses a post it can't read, or whose check fails", () => {
   assert.match(hook(bash(`gh pr comment 5 --body "$BODY"`)).reason, /can't check what this command posts[^]*\$BODY/);
   assert.match(hook(bash(`xargs gh pr comment 5 --body < notes.txt`)).reason, /the arguments xargs adds/);

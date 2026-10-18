@@ -45,6 +45,7 @@ process.exitCode = await main({
   identity: systemIdentity,
   command: [process.execPath, fileURLToPath(import.meta.url)],
   readStdin,
+  stdinIsTTY: process.stdin.isTTY === true,
   out: (text) => process.stdout.write(text),
   err: (text) => process.stderr.write(text),
 });
