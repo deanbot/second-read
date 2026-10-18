@@ -133,12 +133,14 @@ test("a repository file with an email pattern that has no fixed domain is an err
 test("a repository file can exempt files from the added-lines check, but not every file", () => {
   const path = write("repo-f/.second-read.toml", 'exempt_files = ["src/**/*.test.ts", "fixtures/"]\n');
   assert.deepEqual(loadRepoConfig(path, []).exemptFiles, ["src/**/*.test.ts", "fixtures/"]);
-  for (const entry of ["**", "*", "**/*", "**/**", "*/**", "./**", "/**", "/", "./", "", "*?", "**/?*", "**/??*"]) {
+  const blankets = ["**", "*", "**/*", "**/**", "*/**", "./**", "/**", "/", "./", "", "*?", "**/?*", "**/??*"];
+  for (const entry of [...blankets, "*.*", "**/*.*", "**/*.?*", "**/?*.*"]) {
     const blanket = write("repo-f/.second-read.toml", `exempt_files = [${JSON.stringify(entry)}]\n`);
-    assert.throws(() => loadRepoConfig(blanket, []), /exempt_files entry .* takes in every file/, entry);
+    assert.throws(() => loadRepoConfig(blanket, []), /exempt_files entry .* takes in nearly every file/, entry);
   }
-  const narrow = write("repo-f/.second-read.toml", 'exempt_files = ["?", "**/??.ts"]\n');
-  assert.deepEqual(loadRepoConfig(narrow, []).exemptFiles, ["?", "**/??.ts"]);
+  const narrower = ["?", "**/??.ts", "**/.*", "**/*.md", "src/**"];
+  const narrow = write("repo-f/.second-read.toml", `exempt_files = ${JSON.stringify(narrower)}\n`);
+  assert.deepEqual(loadRepoConfig(narrow, []).exemptFiles, narrower);
   const wrong = write("repo-f/.second-read.toml", 'exempt_files = "src/**"\n');
   assert.throws(() => loadRepoConfig(wrong, []), /"exempt_files" must be an array of strings/);
 });

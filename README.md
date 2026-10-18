@@ -79,8 +79,9 @@ exempt_files = ["src/**/*.test.ts", "fixtures/"]
 
 `pre-push` checks the lines a push adds to them for your private terms only. Each glob is a path from the top of the
 repository: `*` and `?` stay within one folder, `**` takes in any number of them, and a trailing `/` takes in a
-whole folder. A glob that takes in every file, such as `**`, is an error. Commit and tag messages, branch and tag
-names, and everything the `gh` shim sends are still checked in full.
+whole folder. A glob made only of wildcards and dots, such as `**` or `**/*.*`, is an error, since it takes in nearly
+every file. Commit and tag messages, branch and tag names, and everything the `gh` shim sends are still checked in
+full.
 
 ## The guards
 

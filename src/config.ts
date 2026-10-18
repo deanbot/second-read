@@ -77,8 +77,8 @@ export function loadRepoConfig(path: string, terms: string[]): RepoConfig {
   for (const entry of exemptFiles) {
     if (isBlanketGlob(entry)) {
       throw new ConfigError(
-        `${path}: exempt_files entry ${JSON.stringify(entry)} takes in every file; ` +
-          `a repository can exempt only narrower globs, as in "src/**/*.test.ts"`,
+        `${path}: exempt_files entry ${JSON.stringify(entry)} is made only of wildcards, so it takes in nearly ` +
+          `every file; a repository can exempt only narrower globs, as in "src/**/*.test.ts"`,
       );
     }
   }
@@ -105,10 +105,11 @@ export function exemptMatcher(globs: string[]): (file: string) => boolean {
   return (file) => patterns.some((re) => re.test(file));
 }
 
-// A glob made only of wildcards, such as "**", "*", "**/*" or "**/?*", which leaves pre-push no added lines to check.
-// A folder of only "?" takes in names of that length, so it's narrower.
+// A glob made only of wildcards and dots, such as "**", "**/?*" or "**/*.*", which leaves pre-push next to no added
+// lines to check. A folder of only "?" takes in names of that length, and one that starts with a dot only dotfiles,
+// so those are narrower.
 export function isBlanketGlob(glob: string): boolean {
-  return globSegments(glob).every((segment) => /^[*?]*\*[*?]*$/.test(segment));
+  return globSegments(glob).every((segment) => /^[*?][*?.]*$/.test(segment) && segment.includes("*"));
 }
 
 function globSegments(glob: string): string[] {

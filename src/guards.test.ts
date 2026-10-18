@@ -873,7 +873,7 @@ test("an exempt_files glob that takes in every file fails the check", () => {
   writeFileSync(join(dir, ".second-read.toml"), 'exempt_files = ["**"]\n');
   const refused = commit(dir, "Clean (#9)");
   assert.equal(refused.status, 1);
-  assert.match(refused.stderr, /the check failed: .*exempt_files entry "\*\*" takes in every file/);
+  assert.match(refused.stderr, /the check failed: .*exempt_files entry "\*\*" is made only of wildcards/);
   assert.equal(secondRead(dir, ["check"], "Clean\n").status, 2);
 });
 

@@ -48,7 +48,7 @@ So the check has to run **before** a post goes out, and it can't rely on the per
     it, so an entry that switches a whole check off is an error, and `pre-push` refuses a change to it until the
     new version's blob id, or the id of the commit that deletes it, is given. Its `exempt_files` globs name files
     whose added lines `pre-push` checks for private terms only, such as the repository's tests; a glob that takes
-    in every file is an error. Messages, tags and posts are still checked in full;
+    in nearly every file is an error. Messages, tags and posts are still checked in full;
   - `second-read init` writes the user's file with comments and no terms, and says how to add them.
 - **Runtime:** TypeScript on Node 22, zero runtime dependencies, published as one npm package. It must start fast
   enough to run on every commit.
