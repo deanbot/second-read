@@ -59,16 +59,22 @@ terms = ["example-private-project"]       # never posted; see below
 allowed_words = ["billing"]               # money words that are fine to post
 allowed_emails = ["*@example.com"]
 allowed_paths = ["~/.config/some-tool"]
+allowed_names = ["juniper"]               # your account or machine name, when it's an ordinary word
 ```
 
 A term matches in any case, with or without accents, in fullwidth forms, with invisible characters inside it, and
 with its words joined by spaces, hyphens or nothing. It doesn't catch misspellings.
 
-A repository can check in a `.second-read.toml` with the same `allowed_*` keys. It can't hold `terms`, and it's an
-error if it names one of your private terms. Since anyone who can change the repository can change it, it also can't
-switch a whole check off: `allowed_paths` can't take in all of `~` or a temp folder, and each `allowed_emails`
-pattern needs a fixed domain (`*@example.com` or `*@*.example.com`, not `*@*` or `*@*.com`). Your own file can allow
-anything.
+The machine name isn't flagged when it's one a system gives by default, such as `MacBook-Pro`, `raspberrypi` or
+`penguin`, or a word for the kind of computer, such as `laptop`. Any other name is, even an ordinary word, since a
+name someone chose can say who they are. If yours is a word that's fine to post, put it in `allowed_names`, and
+the same goes for an account name. Paths with your account name in them are still flagged.
+
+A repository can check in a `.second-read.toml` with the same `allowed_*` keys, but for `allowed_names`: naming
+your machine there would post it. It can't hold `terms`, and it's an error if it names one of your private terms.
+Since anyone who can change the repository can change it, it also can't switch a whole check off: `allowed_paths`
+can't take in all of `~` or a temp folder, and each `allowed_emails` pattern needs a fixed domain (`*@example.com`
+or `*@*.example.com`, not `*@*` or `*@*.com`). Your own file can allow anything.
 
 A repository whose code or tests hold paths, emails or money words on purpose can list those files in its
 `.second-read.toml`:

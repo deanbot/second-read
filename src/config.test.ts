@@ -37,6 +37,7 @@ test("a missing user file is an empty config", () => {
     allowedWords: [],
     allowedEmails: [],
     allowedPaths: [],
+    allowedNames: [],
   });
 });
 
@@ -44,14 +45,20 @@ test("the user file holds terms and allowlists", () => {
   const path = write(
     "user/config.toml",
     'terms = ["example-private-project"]\nallowed_words = ["billing"]\nallowed_emails = ["*@example.org"]\n' +
-      'allowed_paths = ["~/src"]\n',
+      'allowed_paths = ["~/src"]\nallowed_names = ["juniper"]\n',
   );
   assert.deepEqual(loadUserConfig(path), {
     terms: ["example-private-project"],
     allowedWords: ["billing"],
     allowedEmails: ["*@example.org"],
     allowedPaths: ["~/src"],
+    allowedNames: ["juniper"],
   });
+});
+
+test("allowed names belong in the user's own file, never a repository's", () => {
+  const path = write("repo-names/.second-read.toml", 'allowed_names = ["juniper"]\n');
+  assert.throws(() => loadRepoConfig(path, []), /allowed_names belongs in your own config file/);
 });
 
 test("the init template parses, and has no terms", () => {
@@ -99,14 +106,15 @@ test("outside a git repository there is no repository file, even one in a parent
   assert.equal(findRepoConfig(outside), undefined);
 });
 
-test("rules join both allowlists and take terms from the user only", () => {
-  const user = { terms: ["t"], allowedWords: ["a"], allowedEmails: ["b"], allowedPaths: ["c"] };
+test("rules join both allowlists and take terms and allowed names from the user only", () => {
+  const user = { terms: ["t"], allowedWords: ["a"], allowedEmails: ["b"], allowedPaths: ["c"], allowedNames: ["g"] };
   const repo = { allowedWords: ["d"], allowedEmails: ["e"], allowedPaths: ["f"] };
   assert.deepEqual(mergeRules(user, repo), {
     terms: ["t"],
     allowedWords: ["a", "d"],
     allowedEmails: ["b", "e"],
     allowedPaths: ["c", "f"],
+    allowedNames: ["g"],
   });
 });
 

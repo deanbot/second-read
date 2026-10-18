@@ -71,6 +71,23 @@ test("the repository's allowlist applies", async () => {
   assert.equal(code, 0);
 });
 
+// A repository's allowed words used to switch off the machine name too, which publishes the name to allow it.
+test("only the user's own file can stop the machine name being flagged", async () => {
+  const repoWords = await run(["check"], "Built on example-box", (_config, cwd) =>
+    writeFileSync(join(cwd, ".second-read.toml"), 'allowed_words = ["example-box"]\n'),
+  );
+  assert.equal(repoWords.code, 1);
+  assert.match(repoWords.out, /machine name +"example-box"/);
+  const repoNames = await run(["check"], "Built on example-box", (_config, cwd) =>
+    writeFileSync(join(cwd, ".second-read.toml"), 'allowed_names = ["example-box"]\n'),
+  );
+  assert.equal(repoNames.code, 2);
+  assert.match(repoNames.err, /allowed_names belongs in your own config file/);
+  // The account name "example" is in the machine name, so it's allowed too.
+  const user = await run(["check"], "Built on example-box", userFile('allowed_names = ["example", "example-box"]\n'));
+  assert.equal(user.code, 0, user.out);
+});
+
 test("the check failing exits 2, so a guard refuses rather than waving the post through", async () => {
   const cases: [string[], ((config: string, cwd: string) => void) | undefined, RegExp][] = [
     [["check", "--kind", "tweet"], undefined, /--kind must be one of/],
