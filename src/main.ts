@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { check, type Finding, type Identity, KINDS, type Kind, type Rules } from "./checks.ts";
+import { check, checkTerms, type Finding, type Identity, KINDS, type Kind, type Rules } from "./checks.ts";
 import {
   configDir,
+  exemptMatcher,
   findRepoConfig,
   loadRepoConfig,
   loadUserConfig,
@@ -129,12 +130,12 @@ function parseCheckArgs(args: string[]): { kind?: Kind } {
 }
 
 // Your config and the repository's allowlist, from the repository at `io.cwd`: the one being posted to.
-function loadRules(io: Io): { identity: Identity; rules: Rules } {
+function loadRules(io: Io): { identity: Identity; rules: Rules; exemptFiles: string[] } {
   const identity = io.identity();
   const user = loadUserConfig(join(configDir(io.env, io.platform, identity.home), USER_FILE));
   const repoPath = findRepoConfig(io.cwd);
   const repo = repoPath === undefined ? undefined : loadRepoConfig(repoPath, user.terms);
-  return { identity, rules: mergeRules(user, repo) };
+  return { identity, rules: mergeRules(user, repo), exemptFiles: repo?.exemptFiles ?? [] };
 }
 
 async function runCheck(io: Io, { kind }: { kind?: Kind }): Promise<number> {
@@ -215,7 +216,8 @@ async function runHook(io: Io, args: string[]): Promise<number> {
   if (hookPath === undefined || !(HOOKS as readonly string[]).includes(name!)) {
     throw new UsageError(`hook is run by the git hooks that "second-read hooks install" adds`);
   }
-  const { identity, rules } = loadRules(io);
+  const { identity, rules, exemptFiles } = loadRules(io);
+  const exempt = exemptMatcher(exemptFiles);
   let input: Buffer | undefined;
   let sections: Section[];
   let changes: AllowlistChange[] = [];
@@ -252,7 +254,7 @@ async function runHook(io: Io, args: string[]): Promise<number> {
           found.tagNames.add(pushed.commit);
         }
       }
-      const findings = checkPushed(pushed, identity, rules);
+      const findings = checkPushed(pushed, identity, rules, exempt);
       if (findings.length === 0) return;
       sections.push({ where: pushedWhere(pushed), findings });
       if (pushed.kind === "tag") found.tags.add(pushed.commit);
@@ -341,8 +343,13 @@ function checkName(name: string, identity: Identity, rules: Rules): Finding[] {
   return [...findings, ...quoted].sort((a, b) => a.start - b.start);
 }
 
-function checkPushed(pushed: Pushed, identity: Identity, rules: Rules): Finding[] {
-  const findings = check(pushed.text, { identity, rules, kind: "commit" });
+// An exempt file's added lines are checked for private terms only, which are never allowed anywhere. Messages and
+// tags are always checked in full.
+function checkPushed(pushed: Pushed, identity: Identity, rules: Rules, exempt: (file: string) => boolean): Finding[] {
+  const findings =
+    pushed.kind === "added" && pushed.file !== undefined && exempt(pushed.file)
+      ? checkTerms(pushed.text, rules.terms)
+      : check(pushed.text, { identity, rules, kind: "commit" });
   // Added lines are reported by their line number in the file.
   return pushed.lines ? findings.map((f) => ({ ...f, line: pushed.lines![f.line - 1] ?? f.line })) : findings;
 }

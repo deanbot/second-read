@@ -188,12 +188,22 @@ export function check(input: string, options: CheckOptions): Finding[] {
   const shown = outsideAllowed(spans, allowed);
 
   // Private terms are never allowed, wherever they appear.
-  for (const term of rules.terms) {
-    const re = termPattern(term);
-    if (re) shown.push(...foldedSpans(folded, re, "private term"));
-  }
+  shown.push(...termSpans(folded, rules.terms));
 
   return toFindings(input, outermost(shown));
+}
+
+// Only the private terms, for text whose other findings are the repository's own business, such as an exempt
+// file's added lines. A term inside a path or an email is found here, where check reports the wider span.
+export function checkTerms(input: string, terms: string[]): Finding[] {
+  return toFindings(input, outermost(termSpans(fold(input), terms)));
+}
+
+function termSpans(folded: Folded, terms: string[]): Span[] {
+  return terms.flatMap((term) => {
+    const re = termPattern(term);
+    return re ? foldedSpans(folded, re, "private term") : [];
+  });
 }
 
 // An allowed path that takes in the whole home folder or a whole temp folder, which leaves that check nothing to do:

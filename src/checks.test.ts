@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { check, type Identity, type Rules } from "./checks.ts";
+import { check, checkTerms, type Identity, type Rules } from "./checks.ts";
 
 const identity: Identity = {
   user: "example",
@@ -168,6 +168,20 @@ test("private terms, matched however they're written", () => {
   assert.deepEqual(found("ｅｘａｍｐｌｅ-ｐｒｉｖａｔｅ-ｐｒｏｊｅｃｔ", rules), [
     ["private term", "ｅｘａｍｐｌｅ-ｐｒｉｖａｔｅ-ｐｒｏｊｅｃｔ"],
   ]);
+});
+
+test("checkTerms finds only private terms, even inside a path or an email", () => {
+  const text =
+    "Paid plan, ~/notes, /tmp/x and someone@corp.co\nin /Users/example/ExamplePrivateProject/x\n" +
+    "and example-private-project@corp.co\n";
+  assert.deepEqual(
+    checkTerms(text, ["example-private-project"]).map((f) => [f.category, f.line, f.column, f.text]),
+    [
+      ["private term", 2, 19, "ExamplePrivateProject"],
+      ["private term", 3, 5, "example-private-project"],
+    ],
+  );
+  assert.deepEqual(checkTerms(text, []), []);
 });
 
 test("findings report line, column and text from the original input", () => {

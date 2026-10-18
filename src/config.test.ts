@@ -6,6 +6,7 @@ import { after, test } from "node:test";
 import {
   ConfigError,
   configDir,
+  exemptMatcher,
   findRepoConfig,
   loadRepoConfig,
   loadUserConfig,
@@ -65,7 +66,12 @@ test("a user file with an unknown key, a wrong type or bad syntax is an error", 
 
 test("a repository file holds an allowlist only", () => {
   const path = write("repo-a/.second-read.toml", 'allowed_words = ["subscription"]\n');
-  assert.deepEqual(loadRepoConfig(path, []), { allowedWords: ["subscription"], allowedEmails: [], allowedPaths: [] });
+  assert.deepEqual(loadRepoConfig(path, []), {
+    allowedWords: ["subscription"],
+    allowedEmails: [],
+    allowedPaths: [],
+    exemptFiles: [],
+  });
   const withTerms = write("repo-b/.second-read.toml", 'terms = ["x"]\n');
   assert.throws(() => loadRepoConfig(withTerms, []), /never in a repository/);
 });
@@ -122,6 +128,39 @@ test("a repository file with an email pattern that has no fixed domain is an err
   const allowed = ["*@example.com", "someone@example.org", "*@*.example.org", "*@*.example.co.uk"];
   const path = write("repo-e/.second-read.toml", `allowed_emails = ${JSON.stringify(allowed)}\n`);
   assert.deepEqual(loadRepoConfig(path, []).allowedEmails, allowed);
+});
+
+test("a repository file can exempt files from the added-lines check, but not every file", () => {
+  const path = write("repo-f/.second-read.toml", 'exempt_files = ["src/**/*.test.ts", "fixtures/"]\n');
+  assert.deepEqual(loadRepoConfig(path, []).exemptFiles, ["src/**/*.test.ts", "fixtures/"]);
+  const blankets = ["**", "*", "**/*", "**/**", "*/**", "./**", "/**", "/", "./", "", "*?", "**/?*", "**/??*"];
+  for (const entry of [...blankets, "*.*", "**/*.*", "**/*.?*", "**/?*.*"]) {
+    const blanket = write("repo-f/.second-read.toml", `exempt_files = [${JSON.stringify(entry)}]\n`);
+    assert.throws(() => loadRepoConfig(blanket, []), /exempt_files entry .* takes in nearly every file/, entry);
+  }
+  const narrower = ["?", "**/??.ts", "**/.*", "**/*.md", "src/**"];
+  const narrow = write("repo-f/.second-read.toml", `exempt_files = ${JSON.stringify(narrower)}\n`);
+  assert.deepEqual(loadRepoConfig(narrow, []).exemptFiles, narrower);
+  const wrong = write("repo-f/.second-read.toml", 'exempt_files = "src/**"\n');
+  assert.throws(() => loadRepoConfig(wrong, []), /"exempt_files" must be an array of strings/);
+});
+
+test("exempt_files belongs to a repository only", () => {
+  const path = write("user-exempt/config.toml", 'exempt_files = ["src/a.ts"]\n');
+  assert.throws(() => loadUserConfig(path), /unknown key "exempt_files"/);
+});
+
+test("an exempt glob matches paths from the top of the repository", () => {
+  const exempt = exemptMatcher(["src/**/*.test.ts", "src/checks.ts", "fixtures/", "docs/?.md"]);
+  for (const file of ["src/checks.test.ts", "src/a/b/c.test.ts", "src/checks.ts", "fixtures/a/b.txt", "docs/a.md"]) {
+    assert.ok(exempt(file), file);
+  }
+  const kept = ["checks.test.ts", "lib/src/a.test.ts", "src/checks.ts.orig", "src/Checks.ts", "fixtures", "docs/ab.md"];
+  for (const file of [...kept, "src/a.test.tsx", "srcx/a.test.ts", "docs/a/b.md"]) assert.ok(!exempt(file), file);
+  assert.ok(exemptMatcher(["*.md"])("README.md"));
+  assert.ok(!exemptMatcher(["*.md"])("docs/a.md"));
+  assert.ok(exemptMatcher(["./a+b (1).txt"])("a+b (1).txt"));
+  assert.ok(!exemptMatcher([])("a.txt"));
 });
 
 test("the user's own file can allow anything, since it never leaves the machine", () => {

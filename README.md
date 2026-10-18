@@ -70,6 +70,19 @@ switch a whole check off: `allowed_paths` can't take in all of `~` or a temp fol
 pattern needs a fixed domain (`*@example.com` or `*@*.example.com`, not `*@*` or `*@*.com`). Your own file can allow
 anything.
 
+A repository whose code or tests hold paths, emails or money words on purpose can list those files in its
+`.second-read.toml`:
+
+```toml
+exempt_files = ["src/**/*.test.ts", "fixtures/"]
+```
+
+`pre-push` checks the lines a push adds to them for your private terms only. Each glob is a path from the top of the
+repository: `*` and `?` stay within one folder, `**` takes in any number of them, and a trailing `/` takes in a
+whole folder. A glob made only of wildcards and dots, such as `**` or `**/*.*`, is an error, since it takes in nearly
+every file; one for dotfiles, such as `**/.*`, is fine. Commit and tag messages, branch and tag names, and everything
+the `gh` shim sends are still checked in full.
+
 ## The guards
 
 ```sh

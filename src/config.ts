@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isBlanketEmail, isBlanketPath, type Rules } from "./checks.ts";
-import { fold, termPattern } from "./normalize.ts";
+import { escapeRegExp, fold, termPattern } from "./normalize.ts";
 import { parseToml, type TomlValue } from "./toml.ts";
 
 export const USER_FILE = "config.toml";
@@ -16,7 +16,12 @@ export interface UserConfig {
   allowedPaths: string[];
 }
 
-export type RepoConfig = Omit<UserConfig, "terms">;
+export type Allowlists = Omit<UserConfig, "terms">;
+
+export interface RepoConfig extends Allowlists {
+  // Globs of the files whose added lines pre-push checks for private terms only.
+  exemptFiles: string[];
+}
 
 const ALLOW_KEYS = { allowed_words: "allowedWords", allowed_emails: "allowedEmails", allowed_paths: "allowedPaths" };
 
@@ -51,7 +56,7 @@ export function loadRepoConfig(path: string, terms: string[]): RepoConfig {
   }
   // Anyone who can change the repository can change this file, so it can't switch a whole check off.
   // The user's own file can, since it never leaves the machine.
-  const lists = allowLists(values, path, []);
+  const lists = allowLists(values, path, ["exempt_files"]);
   for (const entry of lists.allowedPaths) {
     if (isBlanketPath(entry)) {
       throw new ConfigError(
@@ -68,7 +73,48 @@ export function loadRepoConfig(path: string, terms: string[]): RepoConfig {
       );
     }
   }
-  return lists;
+  const exemptFiles = stringList(values, "exempt_files", path);
+  for (const entry of exemptFiles) {
+    if (isBlanketGlob(entry)) {
+      throw new ConfigError(
+        `${path}: exempt_files entry ${JSON.stringify(entry)} is made only of wildcards, so it takes in nearly ` +
+          `every file; a repository can exempt only narrower globs, as in "src/**/*.test.ts"`,
+      );
+    }
+  }
+  return { ...lists, exemptFiles };
+}
+
+// A glob over paths from the top of the repository. "*" and "?" stay within one folder, "**" takes in any number of
+// folders, and a glob ending in "/" takes in everything under that folder. Case counts, as it does in git.
+export function exemptMatcher(globs: string[]): (file: string) => boolean {
+  if (globs.length === 0) return () => false;
+  const patterns = globs.map((glob) => {
+    const segments = globSegments(glob);
+    let source = "";
+    segments.forEach((segment, i) => {
+      const last = i === segments.length - 1;
+      if (segment === "**") source += last ? ".*" : "(?:[^/]*/)*";
+      else {
+        source += segment.split("").map((c) => (c === "*" ? "[^/]*" : c === "?" ? "[^/]" : escapeRegExp(c))).join("");
+        if (!last) source += "/";
+      }
+    });
+    return new RegExp(`^${source}$`, "u");
+  });
+  return (file) => patterns.some((re) => re.test(file));
+}
+
+// A glob made only of wildcards and dots, such as "**", "**/?*" or "**/*.*", which leaves pre-push next to no added
+// lines to check. A folder of only "?" takes in names of that length, and one that starts with a dot only dotfiles,
+// so those are narrower.
+export function isBlanketGlob(glob: string): boolean {
+  return globSegments(glob).every((segment) => /^[*?][*?.]*$/.test(segment) && segment.includes("*"));
+}
+
+function globSegments(glob: string): string[] {
+  const trimmed = glob.replace(/^(?:\.?\/)+/, "");
+  return (trimmed === "" || trimmed.endsWith("/") ? trimmed + "**" : trimmed).split("/");
 }
 
 // The nearest .second-read.toml at or above `cwd`, up to the top of the git repository. Outside a repository
@@ -86,7 +132,7 @@ export function findRepoConfig(cwd: string): string | undefined {
   }
 }
 
-export function mergeRules(user: UserConfig, repo: RepoConfig | undefined): Rules {
+export function mergeRules(user: UserConfig, repo: Allowlists | undefined): Rules {
   return {
     terms: user.terms,
     allowedWords: [...user.allowedWords, ...(repo?.allowedWords ?? [])],
@@ -115,7 +161,7 @@ allowed_emails = []
 allowed_paths = []
 `;
 
-function allowLists(values: Record<string, TomlValue>, path: string, extra: string[]): RepoConfig {
+function allowLists(values: Record<string, TomlValue>, path: string, extra: string[]): Allowlists {
   for (const key of Object.keys(values)) {
     if (!Object.hasOwn(ALLOW_KEYS, key) && !extra.includes(key)) {
       throw new ConfigError(`${path}: unknown key "${key}"`);

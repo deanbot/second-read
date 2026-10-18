@@ -33,7 +33,7 @@ So the check has to run **before** a post goes out, and it can't rely on the per
   check never waves a post through.
 - **The report** names each finding's category, the line, and the matched text. It is printed locally only.
 - **Checks:**
-  - paths under the home folder, written with the real account name or as `~/…` followed by something other than an
+  - paths under the home folder, written with the real account name or as `~/` followed by something other than an
     allowed generic name;
   - temporary and scratch folders;
   - the account name, the machine name, and email addresses outside the allowlist;
@@ -46,7 +46,9 @@ So the check has to run **before** a post goes out, and it can't rely on the per
     private terms, allowed emails, allowed paths;
   - a repository's `.second-read.toml`: an allowlist only, never private terms. Anyone with write access can change
     it, so an entry that switches a whole check off is an error, and `pre-push` refuses a change to it until the
-    new version's blob id, or the id of the commit that deletes it, is given;
+    new version's blob id, or the id of the commit that deletes it, is given. Its `exempt_files` globs name files
+    whose added lines `pre-push` checks for private terms only, such as the repository's tests; a glob that takes
+    in nearly every file is an error. Messages, tags and posts are still checked in full;
   - `second-read init` writes the user's file with comments and no terms, and says how to add them.
 - **Runtime:** TypeScript on Node 22, zero runtime dependencies, published as one npm package. It must start fast
   enough to run on every commit.
@@ -97,4 +99,4 @@ What the guards can't see: an agent that posts through its own GitHub tool, or t
 - Secrets and keys: use a secrets scanner beside it.
 - Rewriting or redacting text.
 - Checking code for private data. Added lines are checked for the same words and paths, but data files and fixtures
-  are the repository's own business, allowed through `.second-read.toml`.
+  are the repository's own business, exempted through `.second-read.toml`. A private term is found in them anyway.
