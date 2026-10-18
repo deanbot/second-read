@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { parseGh, postNames, postTexts } from "./gh.ts";
+import { globNames, parseGh, postNames, postTexts } from "./gh.ts";
 
 test("parseGh reads the title, body and body files of a posting command", () => {
   assert.deepEqual(parseGh(["issue", "create", "--title", "T", "-b", "B", "--body-file=notes.md"]), {
@@ -14,6 +17,9 @@ test("parseGh reads the title, body and body files of a posting command", () => 
     body: ["B"],
     bodyFiles: ["notes.md"],
     names: [],
+    emails: [],
+    labels: [],
+    assets: [],
   });
   assert.deepEqual(parseGh(["pr", "review", "5", "--approve", "-F", "-", "-bAlso", "-t=x"]), {
     kind: "review",
@@ -26,6 +32,9 @@ test("parseGh reads the title, body and body files of a posting command", () => 
     body: ["Also"],
     bodyFiles: ["-"],
     names: [],
+    emails: [],
+    labels: [],
+    assets: [],
   });
 });
 
@@ -73,6 +82,9 @@ test("parseGh reads a merge commit's subject and body", () => {
     body: ["Body"],
     bodyFiles: ["msg.md"],
     names: [],
+    emails: [],
+    labels: [],
+    assets: [],
   });
   assert.deepEqual(
     postTexts(post!, () => "From the file"),
@@ -84,11 +96,22 @@ test("parseGh reads a merge commit's subject and body", () => {
   );
 });
 
+test("parseGh reads a merge commit's author email, in each spelling", () => {
+  const author = (args: string[]) => postTexts(parseGh(["pr", "merge", "5", ...args])!, () => "");
+  const email: [string, string][] = [["the author email of this merge commit", "someone@example.com"]];
+  assert.deepEqual(author(["--author-email", "someone@example.com"]), email);
+  assert.deepEqual(author(["--author-email=someone@example.com"]), email);
+  assert.deepEqual(author(["-A", "someone@example.com"]), email);
+  assert.deepEqual(author(["-Asomeone@example.com"]), email);
+  assert.deepEqual(author(["-sA", "someone@example.com"]), email);
+  assert.deepEqual(author(["--match-head-commit", "abc123", "--squash"]), []);
+});
+
 const texts = (args: string[], read = (file: string) => `From ${file}`) => postTexts(parseGh(args)!, read);
 
-const names = (args: string[]) => postNames(parseGh(args)!);
+const names = (args: string[], glob = (pattern: string) => [`Matches ${pattern}`]) => postNames(parseGh(args)!, glob);
 
-test("parseGh reads a release's title, notes and tag, but not its assets", () => {
+test("parseGh reads a release's title, notes and tag", () => {
   for (const command of ["create", "new", "edit"]) {
     assert.deepEqual(texts(["release", command, "v1", "dist.tgz", "--draft", "-t", "T", "--notes", "N", "-F", "notes.md"]), [
       ["the title of this release", "T"],
@@ -99,7 +122,7 @@ test("parseGh reads a release's title, notes and tag, but not its assets", () =>
   assert.deepEqual(texts(["release", "create", "v1", "--notes-file", "-"], () => "On stdin"), [
     ["the notes of this release", "On stdin"],
   ]);
-  assert.deepEqual(names(["release", "create", "--target", "main", "--latest", "v1", "dist.tgz"]), [
+  assert.deepEqual(names(["release", "create", "--target", "main", "--latest", "v1"]), [
     ["the tag of this release", "v1"],
   ]);
   assert.deepEqual(names(["release", "new", "--notes-start-tag=v0", "-pd", "v1"]), [["the tag of this release", "v1"]]);
@@ -109,6 +132,61 @@ test("parseGh reads a release's title, notes and tag, but not its assets", () =>
     ["the tag of this release", "v1"],
   ]);
   assert.deepEqual(names(["release", "edit", "old", "--draft"]), []);
+});
+
+test("parseGh reads the label of each asset a release uploads, and the file name of one without", () => {
+  for (const args of [["create", "v1"], ["new", "-d", "v1"], ["upload", "--clobber", "v1"]]) {
+    const command = ["release", ...args, "dist/app.tgz#App for Linux", "dist/sub/notes.txt", "#odd.txt", "x.zip#"];
+    assert.deepEqual(texts(command).slice(-2), [
+      ["the label of an asset of this release", "App for Linux"],
+      ["the label of an asset of this release", ""],
+    ]);
+    assert.deepEqual(names(command).filter(([where]) => where.includes("asset")), [
+      ["the file name of an asset of this release", "notes.txt"],
+      ["the file name of an asset of this release", "#odd.txt"],
+    ]);
+  }
+  // A label runs from the first "#", and the asset after the tag is the first.
+  assert.deepEqual(texts(["release", "upload", "v1", "a.tgz#One #1"]), [["the label of an asset of this release", "One #1"]]);
+  assert.deepEqual(names(["release", "upload", "-R", "example/repo", "v1", "--", "-a.tgz"]), [
+    ["the file name of an asset of this release", "-a.tgz"],
+  ]);
+  // The tag of a release being uploaded to is already public.
+  assert.deepEqual(names(["release", "upload", "v1"]), []);
+});
+
+test("parseGh hands each asset gh expands as a glob to be matched, but not one with a label", () => {
+  assert.deepEqual(names(["release", "upload", "v1", "dist/*.tgz", "app-?.zip", "[ab].txt", "a\\b", "dist/*.tgz#All"]), [
+    ["the file name of an asset of this release", "Matches dist/*.tgz"],
+    ["the file name of an asset of this release", "Matches app-?.zip"],
+    ["the file name of an asset of this release", "Matches [ab].txt"],
+    ["the file name of an asset of this release", "Matches a\\b"],
+  ]);
+  // One that starts with "#" is neither labeled nor expanded.
+  assert.deepEqual(names(["release", "upload", "v1", "#*.tgz"]), [["the file name of an asset of this release", "#*.tgz"]]);
+});
+
+test("globNames matches files as Go's filepath.Glob does, dot files and all", () => {
+  const dir = mkdtempSync(join(tmpdir(), "second-read-glob-"));
+  try {
+    mkdirSync(join(dir, "dist", "linux"), { recursive: true });
+    for (const file of ["app.tgz", ".hidden.tgz", "b.txt", "notes.md", "linux/app-1.tgz", "a]b.txt", "x*y"]) {
+      writeFileSync(join(dir, "dist", file), "");
+    }
+    const glob = (pattern: string) => globNames(pattern, dir).sort();
+    assert.deepEqual(glob("dist/*.tgz"), [".hidden.tgz", "app.tgz"]);
+    assert.deepEqual(glob(join(dir, "dist", "*.md")), ["notes.md"]);
+    assert.deepEqual(glob("dist/?.txt"), ["b.txt"]);
+    assert.deepEqual(glob("dist/*/app-?.tgz"), ["app-1.tgz"]);
+    // A class is read as any one character, so it never matches less than Go does.
+    assert.deepEqual(glob("dist/[ab].txt"), ["b.txt"]);
+    assert.deepEqual(glob("dist/[^x].txt"), ["b.txt"]);
+    assert.deepEqual(glob("dist/a[]]b.txt"), ["a]b.txt"]);
+    assert.deepEqual(glob("dist/x\\*y"), ["x*y"]);
+    assert.deepEqual(glob("missing/*.tgz"), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("parseGh reads the files a gist uploads, its description, and stdin", () => {

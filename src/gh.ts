@@ -1,11 +1,13 @@
-import { accessSync, closeSync, constants, openSync, readSync, realpathSync, statSync } from "node:fs";
+import { accessSync, closeSync, constants, openSync, readdirSync, readSync, realpathSync, statSync } from "node:fs";
 import { basename, delimiter, join, resolve } from "node:path";
 import { KIND_NAMES, type Kind } from "./checks.ts";
 import { shQuote } from "./git.ts";
+import { escapeRegExp } from "./normalize.ts";
+import { UNKNOWN } from "./shell.ts";
 
 export const SHIM_MARKER = "# Added by second-read: the gh shim.";
 
-type Field = "title" | "body" | "bodyFile" | "name";
+type Field = "title" | "body" | "bodyFile" | "name" | "email";
 
 const TEXT_FLAGS: Record<string, Field> = {
   "--title": "title",
@@ -19,7 +21,7 @@ const TEXT_FLAGS: Record<string, Field> = {
 // Closing or reopening with a comment posts the comment.
 const COMMENT_FLAGS: Record<string, Field> = { "--comment": "body", "-c": "body" };
 
-// A merge commit's message: its subject and body.
+// A merge commit's message, its subject and body, and its author's address.
 const MERGE_FLAGS: Record<string, Field> = {
   "--subject": "title",
   "-t": "title",
@@ -27,6 +29,8 @@ const MERGE_FLAGS: Record<string, Field> = {
   "-b": "body",
   "--body-file": "bodyFile",
   "-F": "bodyFile",
+  "--author-email": "email",
+  "-A": "email",
 };
 
 const RELEASE_FLAGS: Record<string, Field> = {
@@ -76,11 +80,23 @@ const release = (posting: Partial<Posting>): Posting => ({
   ...posting,
 });
 
+// Each asset is "<file>#<label>" or "<file>", and is uploaded under its file's name. A label is shown on the release
+// page in place of the name. gh expands an asset with no "#" as a glob; one that starts with "#" has no label. One
+// the shell fills in is kept whole, to be refused unread.
+const assets = (post: GhPost, args: string[]) => {
+  for (const arg of args) {
+    const at = arg.includes(UNKNOWN) ? -1 : arg.indexOf("#");
+    if (at > 0) post.labels.push(arg.slice(at + 1));
+    else post.assets.push(arg);
+  }
+};
+
 // gh release create [<tag>] [<asset>...]
 const releaseCreate = release({
   valued: ["--discussion-category", "--notes-start-tag", "--target"],
-  args: (post, [tag]) => {
+  args: (post, [tag, ...files]) => {
     if (tag !== undefined) post.names.push(tag);
+    assets(post, files);
   },
 });
 
@@ -166,7 +182,7 @@ const POSTS: Record<string, Record<string, Posting>> = {
     merge: {
       kind: "commit",
       flags: MERGE_FLAGS,
-      valued: ["--author-email", "-A", "--match-head-commit"],
+      valued: ["--match-head-commit"],
       noun: "this merge commit",
       titleName: "subject",
     },
@@ -176,6 +192,8 @@ const POSTS: Record<string, Record<string, Posting>> = {
     new: releaseCreate,
     // The tag it's given now is checked, not the one it had, so a release's tag can be renamed.
     edit: release({ flags: { ...RELEASE_FLAGS, "--tag": "name" } }),
+    // gh release upload <tag> <asset>...: the release is already there, under its tag.
+    upload: release({ flags: {}, valued: [], args: (post, [, ...files]) => assets(post, files) }),
   },
   gist: {
     create: gistCreate,
@@ -225,6 +243,11 @@ export interface GhPost {
   bodyFiles: string[];
   // Names the command gives, public once it runs: a repository's, a release's tag, a gist file's.
   names: string[];
+  // A merge commit's author's address.
+  emails: string[];
+  // The release assets uploaded with a label, and the files of those without one.
+  labels: string[];
+  assets: string[];
   // Stdin is read only when it's piped in, never from a terminal.
   stdinIfPiped?: boolean;
 }
@@ -252,6 +275,9 @@ export function parseGh(args: string[]): GhPost | undefined {
     body: [],
     bodyFiles: [],
     names: [],
+    emails: [],
+    labels: [],
+    assets: [],
   };
   const takesValue = (flag: string) =>
     flag in posting.flags || posting.valued.includes(flag) || flag === "-R" || flag === "--repo";
@@ -286,6 +312,7 @@ export function parseGh(args: string[]): GhPost | undefined {
     if (value === undefined) continue;
     if (field === "bodyFile") post.bodyFiles.push(value);
     else if (field === "name") post.names.push(value);
+    else if (field === "email") post.emails.push(value);
     else post[field].push(value);
   }
   posting.args?.(post, positional.slice(2));
@@ -318,12 +345,68 @@ export function postTexts(post: GhPost, read: (file: string) => string): [string
       f === "-" ? `the ${post.fileName} of ${noun}` : `the ${post.fileName} of ${noun}, from ${f}`,
       read(f),
     ]),
+    ...post.emails.map((t): [string, string] => [`the author email of ${noun}`, t]),
+    ...post.labels.map((t): [string, string] => [`the label of an asset of ${noun}`, t]),
   ];
 }
 
-// Each name a posting gh command gives, with where it goes. A name is checked as a branch name is.
-export function postNames(post: GhPost): [string, string][] {
-  return post.names.map((n) => [`the ${post.nameName} of ${post.noun}`, n]);
+// Each name a posting gh command gives, with where it goes. A name is checked as a branch name is. `glob` gives the
+// names of the files an asset that gh expands as a glob matches.
+export function postNames(post: GhPost, glob: (pattern: string) => string[]): [string, string][] {
+  const files = post.assets.flatMap((a) => {
+    if (a.includes(UNKNOWN)) return [a];
+    return !a.includes("#") && GLOB_META.test(a) ? glob(a) : [basename(a)];
+  });
+  return [
+    ...post.names.map((n): [string, string] => [`the ${post.nameName} of ${post.noun}`, n]),
+    ...files.map((n): [string, string] => [`the file name of an asset of ${post.noun}`, n]),
+  ];
+}
+
+// The characters Go's filepath.Glob reads as a pattern, outside Windows.
+const GLOB_META = /[*?[\\]/;
+
+// The names of the files a pattern matches, read as Go's filepath.Glob reads it, which gh runs on an asset. "*"
+// matches any run of characters but "/", "?" one, and "\" makes the next character plain; a dot file is matched too.
+// A class in brackets is read as any one character, so a pattern never takes in fewer files than gh uploads.
+export function globNames(pattern: string, cwd: string): string[] {
+  let paths = [pattern.startsWith("/") ? "/" : ""];
+  for (const segment of pattern.split("/")) {
+    if (segment === "") continue;
+    if (!GLOB_META.test(segment)) {
+      paths = paths.map((p) => join(p, segment));
+      continue;
+    }
+    const re = globSegment(segment);
+    paths = paths.flatMap((p) => {
+      try {
+        return readdirSync(resolve(cwd, p || ".")).filter((name) => re.test(name)).map((name) => join(p, name));
+      } catch {
+        return [];
+      }
+    });
+  }
+  return paths.map((p) => basename(p));
+}
+
+function globSegment(segment: string): RegExp {
+  let source = "";
+  for (let i = 0; i < segment.length; i++) {
+    const c = segment[i]!;
+    if (c === "*") source += ".*";
+    else if (c === "?") source += ".";
+    else if (c === "\\") source += escapeRegExp(segment[++i] ?? "\\");
+    else if (c === "[") {
+      // A class ends at the first "]" past its first character, which may be "]" itself.
+      let j = segment[i + 1] === "^" ? i + 2 : i + 1;
+      for (let first = true; j < segment.length && (first || segment[j] !== "]"); j++, first = false) {
+        if (segment[j] === "\\") j++;
+      }
+      source += ".";
+      i = j;
+    } else source += escapeRegExp(c);
+  }
+  return new RegExp(`^${source}$`, "su");
 }
 
 export function shimScript(command: string[]): string {

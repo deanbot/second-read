@@ -127,11 +127,13 @@ second-read shim install     # writes a gh shim, and says which folder to put ah
   `SECOND_READ_ALLOWLIST_REVIEWED="<id>"`. An id covers only that change, so a later one is refused again.
 - **The `gh` shim** checks `--title`, `--body`, `--body-file` and a body read from stdin, for `gh issue` and
   `gh pr` `create`, `edit` and `comment`, and `gh pr review`. It also checks the `--comment` that `close` and
-  `reopen` leave, and the `--subject` and body of `gh pr merge`'s merge commit. It checks a release's title,
-  notes and tag, a gist's description and the files it uploads, stdin included, with the name each is uploaded
-  under, a label's name and description, and a repository's name and description, on `gh repo rename` too. A name
-  is checked as a branch name is, and only the new one, so a leaked name can be renamed away. Then it runs the real
-  `gh` with the same arguments and input. Every other command, `gh api` included, passes straight through.
+  `reopen` leave, and the `--subject`, body and `--author-email` of `gh pr merge`'s merge commit. It checks a
+  release's title, notes and tag, and the label of each asset `gh release create` or `gh release upload` sends, or
+  its file name when it has no label, a gist's description and the files it uploads, stdin included, with the name
+  each is uploaded under, a label's name and description, and a repository's name and description, on
+  `gh repo rename` too. A name is checked as a branch name is, and only the new one, so a leaked name can be renamed
+  away. Then it runs the real `gh` with the same arguments and input. Every other command, `gh api` included, passes
+  straight through.
 
 Each guard refuses on a finding, and also when the check itself fails. A hook that was already in place is set aside
 and still runs after the check; `second-read hooks uninstall` removes only second-read's hooks and puts it back. The
@@ -183,7 +185,8 @@ A body can come from a heredoc (`--body "$(cat <<'EOF' … EOF)"`), a here-strin
 `printf` piped in. A file the same command writes first, as in `cat > body.md <<'EOF'`, is read from the command,
 since the hook runs before it does. Posts inside `$(…)` and backticks are checked too. A body the shell fills in
 only when the command runs, such as `--body "$BODY"` or what `xargs` adds, can't be read beforehand, so the call is
-denied. Put the text in the command, or in a file and pass its path.
+denied. So is a release asset given as a glob, such as `dist/*.tgz`, whose files may not be there yet. Put the text
+in the command, or in a file and pass its path, and name each asset.
 
 The plugin never approves a call. A clean post goes on to Claude Code's usual permission check. Its deny holds in
 `bypassPermissions` mode too: a session run with `--permission-mode bypassPermissions` on Claude Code 2.1.302 had

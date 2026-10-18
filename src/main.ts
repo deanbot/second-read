@@ -22,7 +22,7 @@ import {
   USER_FILE_TEMPLATE,
 } from "./config.ts";
 import { bashPosts, firstUnknown, isGithubTool, mcpPosts, type Post } from "./claude.ts";
-import { findRealGh, isShim, parseGh, postNames, postTexts, shimScript } from "./gh.ts";
+import { findRealGh, globNames, isShim, parseGh, postNames, postTexts, shimScript } from "./gh.ts";
 import {
   type AllowlistChange,
   allowlistChanges,
@@ -411,7 +411,10 @@ async function runShim(io: Io, args: string[]): Promise<number> {
     const stdin = input?.toString("utf8") ?? "";
     const texts = postTexts(post, (file) => (file === "-" ? stdin : readFileSync(resolve(io.cwd, file), "utf8")));
     const sections = [
-      ...postNames(post).map(([where, name]) => ({ where, findings: checkName(name, identity, rules) })),
+      ...postNames(post, (pattern) => globNames(pattern, io.cwd)).map(([where, name]) => ({
+        where,
+        findings: checkName(name, identity, rules),
+      })),
       ...texts.map(([where, text]) => ({ where, findings: check(text, { identity, rules, kind: post.kind }) })),
     ].filter((s) => s.findings.length > 0);
     if (sections.length > 0) {

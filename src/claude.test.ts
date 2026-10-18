@@ -66,6 +66,39 @@ test("bashPosts reads the names a gh post gives, marked to be checked as names",
     ["the file name of this gist", "body.md", true],
     ["the contents of this gist, from sub/body.md", "From a file.\n", false],
   ]);
+  // A "#" inside a word starts a label, not a comment.
+  assert.deepEqual(names(`gh release upload v1 dist/app.tgz#App dist/notes.txt 'dist/a.zip#For Linux'`), [
+    ["the file name of an asset of this release", "notes.txt", true],
+    ["the label of an asset of this release", "App", false],
+    ["the label of an asset of this release", "For Linux", false],
+  ]);
+});
+
+test("bashPosts reads a merge commit's author email", () => {
+  assert.deepEqual(texts(`gh pr merge 5 --squash -A someone@example.com`), [
+    ["the author email of this merge commit", "someone@example.com"],
+  ]);
+  assert.deepEqual(texts(`gh pr merge 5 -sA someone@example.com --subject "Subject"`), [
+    ["the subject of this merge commit", "Subject"],
+    ["the author email of this merge commit", "someone@example.com"],
+  ]);
+});
+
+test("bashPosts marks an asset gh or the shell expands as a glob, and one the shell fills in, as unknown", () => {
+  for (const command of [
+    `gh release create v1 dist/*.tgz`,
+    `gh release upload v1 'dist/*.tgz'`,
+    `gh release upload v1 "$DIR"/app.tgz`,
+    `gh release upload v1 "dist/app.tgz#$LABEL"`,
+    `gh release upload v1 $(ls dist/x)`,
+  ]) {
+    const [asset] = texts(command).filter(([where]) => where?.includes("asset"));
+    assert.ok(asset?.[1]?.includes(UNKNOWN), command);
+  }
+  // gh never expands a labeled asset.
+  assert.deepEqual(texts(`gh release upload v1 'dist/*.tgz#All of them'`), [
+    ["the label of an asset of this release", "All of them"],
+  ]);
 });
 
 test("bashPosts reads a body file from the folder the command runs in", () => {

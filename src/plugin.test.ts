@@ -132,6 +132,30 @@ test("the hook checks the names a post gives as branch names are read, and lets 
   assert.equal(hook(bash(`gh repo rename -R example/${TERM} clean`)).denied, false);
 });
 
+// The scratch git config's user.email is example@example.com.
+test("the hook checks a merge commit's author email as an address in a commit", () => {
+  const allowing = join(scratch, "allowing");
+  assert.equal(spawnSync("git", ["init", "-q", allowing], { env }).status, 0);
+  writeFileSync(join(allowing, ".second-read.toml"), 'allowed_emails = ["*@example.com"]\n');
+  const merge = (args: string) => hook({ ...bash(`gh pr merge 5 --squash ${args}`), cwd: allowing });
+  assert.match(merge("-A example@example.com").reason, /author email of this merge commit[^]*your email/);
+  assert.match(merge("--author-email=someone@mail-example.co").reason, /email +"someone@mail-example\.co"/);
+  assert.equal(merge("-A 12345+example@users.noreply.github.com").denied, false);
+  assert.equal(merge("-A someone@example.com").denied, false);
+  assert.match(merge(`-A "$EMAIL"`).reason, /can't check what this command posts/);
+});
+
+test("the hook checks each release asset's label, and the file name of one without", () => {
+  assert.match(hook(bash(`gh release create v1 "dist/app.tgz#${LEAKY}"`)).reason, /label of an asset of this release/);
+  assert.match(hook(bash(`gh release upload v1 dist/app.tgz#${TERM}`)).reason, /label of an asset of this release/);
+  assert.match(hook(bash(`gh release upload v1 dist/${TERM}.tgz`)).reason, /file name of an asset of this release/);
+  assert.equal(hook(bash(`gh release upload v1 dist/${TERM}/app.tgz "dist/app.tgz#App for Linux"`)).denied, false);
+  // A glob is expanded only when the command runs, past files it may make first.
+  const glob = hook(bash(`npm pack --pack-destination dist && gh release upload v1 dist/*.tgz`)).reason;
+  assert.match(glob, /can't check what this command posts[^]*file name of an asset of this release: dist\/\*\.tgz/);
+  assert.equal(hook(bash(`gh release upload v1 "dist/*.tgz#All builds"`)).denied, false);
+});
+
 test("the hook checks the files a gist uploads in full, even exempt ones", () => {
   const fixture = 'const saved = "~/notes/today.md";\n';
   writeFileSync(join(repo, "src", "cache.test.ts"), fixture);
