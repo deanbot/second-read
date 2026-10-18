@@ -20,7 +20,8 @@ function systemIdentity(): Identity {
   return { user, home: homedir(), host: hostname(), tempDirs, emails: gitEmails() };
 }
 
-// Every user.email git has, in each of its config files: one set in a repository doesn't hide the global one.
+// Every user.email git uses here, from each config file it reads: one set in a repository doesn't hide the global
+// one. An address an includeIf sets for another folder isn't read.
 // No git, or no address, means none to check.
 function gitEmails(): string[] {
   const result = spawnSync("git", ["config", "--get-all", "user.email"], { encoding: "utf8" });

@@ -78,9 +78,9 @@ can't take in all of `~` or a temp folder, and each `allowed_emails` pattern nee
 or `*@*.example.com`, not `*@*` or `*@*.com`). Your own file has none of these limits.
 
 A pattern with a fixed domain can still take in a lot, such as `*@*.co.uk`, or `*@gmail.com` and everyone there. So
-your own addresses, each `user.email` git has, are checked whatever a repository allows, unless one is a noreply
-address. Your own file allows one only by naming it exactly, as `git commit -s` needs: a pattern such as
-`*@gmail.com` is for other people's addresses, and doesn't take in yours.
+your own addresses, each `user.email` git uses where the check runs, are checked whatever a repository allows,
+unless one is a noreply address. Your own file allows one only by naming it exactly, as `git commit -s` needs: a
+pattern such as `*@gmail.com` is for other people's addresses, and doesn't take in yours.
 
 A repository whose code or tests hold paths, emails or money words on purpose can list those files in its
 `.second-read.toml`:
