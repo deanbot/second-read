@@ -83,8 +83,18 @@ test("the hook checks posts inside substitutions, and files the command writes f
   assert.match(hook(bash(rewrite)).reason, /private term/);
 });
 
+test("the hook checks comments left by close and reopen, merge commit messages, and posts behind sudo", () => {
+  assert.match(hook(bash(`gh issue close 3 --comment "${LEAKY}"`)).reason, /body of this comment/);
+  assert.match(hook(bash(`gh pr reopen 5 -c "${LEAKY}"`)).reason, /body of this comment/);
+  assert.match(hook(bash(`gh pr merge 5 --squash --subject "${LEAKY}"`)).reason, /subject of this merge commit/);
+  assert.match(hook(bash(`gh pr merge 5 -t "Move the cache" --body "${LEAKY}"`)).reason, /body of this merge commit/);
+  assert.equal(hook(bash(`gh pr merge 5 --squash --subject "Move the cache" --body "${CLEAN}"`)).denied, false);
+  assert.match(hook(bash(`sudo gh pr comment 5 --body "${LEAKY}"`)).reason, /private term/);
+});
+
 test("the hook refuses a post it can't read, or whose check fails", () => {
   assert.match(hook(bash(`gh pr comment 5 --body "$BODY"`)).reason, /can't check what this command posts[^]*\$BODY/);
+  assert.match(hook(bash(`xargs gh pr comment 5 --body < notes.txt`)).reason, /the arguments xargs adds/);
   assert.match(hook(bash(`gh pr comment 5 --body-file missing.md`)).reason, /the check failed/);
   assert.match(hook("not json").reason, /the check failed/);
 });

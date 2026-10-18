@@ -70,6 +70,25 @@ test("bashPosts finds posts behind wrappers, assignments and sh -c", () => {
   assert.equal(texts(`GH_PAGER= env -u X command gh pr comment 1 -b "Wrapped"`)[0]?.[1], "Wrapped");
   assert.equal(texts(`bash -c 'gh pr comment 1 -b "Inner"'`)[0]?.[1], "Inner");
   assert.equal(texts(`/opt/example/bin/gh pr comment 1 -b "By path"`)[0]?.[1], "By path");
+  assert.equal(texts(`sudo gh pr comment 1 -b "Sudo"`)[0]?.[1], "Sudo");
+  assert.equal(texts(`sudo -E -u someone -- env X=1 gh pr comment 1 -b "Past options"`)[0]?.[1], "Past options");
+});
+
+test("bashPosts reads text xargs adds as text the shell fills in", () => {
+  assert.ok(texts(`xargs gh pr comment 5 --body < body.md`)[0]?.[1]?.includes(UNKNOWN));
+  assert.ok(texts(`echo note | xargs -I{} gh pr comment 5 --body "Note: {}"`)[0]?.[1]?.includes(UNKNOWN));
+  assert.deepEqual(texts(`echo 5 | xargs -n 1 gh pr comment --body "Known text"`), [
+    ["the body of this comment", "Known text"],
+  ]);
+  assert.deepEqual(texts(`gh pr list -q '.[].number' | xargs -n1 gh pr view`), []);
+});
+
+test("bashPosts reads the comments close and reopen leave, and a merge commit's message", () => {
+  assert.deepEqual(texts(`gh issue close 3 --comment "Done" && gh pr merge 5 --squash -t "Subject" -b "Body"`), [
+    ["the body of this comment", "Done"],
+    ["the subject of this merge commit", "Subject"],
+    ["the body of this merge commit", "Body"],
+  ]);
 });
 
 test("bashPosts reads the posts inside command substitutions", () => {

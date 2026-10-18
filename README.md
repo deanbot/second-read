@@ -113,8 +113,9 @@ second-read shim install     # writes a gh shim, and says which folder to put ah
   blob, or the commit that deletes the file. Once you've read the change, push again with
   `SECOND_READ_ALLOWLIST_REVIEWED="<id>"`. An id covers only that change, so a later one is refused again.
 - **The `gh` shim** checks `--title`, `--body`, `--body-file` and a body read from stdin, for `gh issue` and
-  `gh pr` `create`, `edit` and `comment`, and `gh pr review`. Then it runs the real `gh` with the same arguments and
-  input. Every other command, `gh api` included, passes straight through.
+  `gh pr` `create`, `edit` and `comment`, and `gh pr review`. It also checks the `--comment` that `close` and
+  `reopen` leave, and the `--subject` and body of `gh pr merge`'s merge commit. Then it runs the real `gh` with the
+  same arguments and input. Every other command, `gh api` included, passes straight through.
 
 Each guard refuses on a finding, and also when the check itself fails. A hook that was already in place is set aside
 and still runs after the check; `second-read hooks uninstall` removes only second-read's hooks and puts it back. The
@@ -130,8 +131,8 @@ off until you install them again.
 ## The Claude Code plugin
 
 The plugin checks what Claude Code is about to post, before the tool call runs. When it finds something, it denies
-the call and gives Claude the report as the reason, so Claude can fix the text and try again. It needs Node 22.18 or
-newer on `PATH`, and it reads the same config files as the guards.
+the call and gives Claude the report as the reason, so Claude can fix the text and try again. It needs Claude Code
+2.1.295 or newer and Node 22.18 or newer on `PATH`, and it reads the same config files as the guards.
 
 1. Add this repository as a plugin marketplace:
 
@@ -153,7 +154,8 @@ newer on `PATH`, and it reads the same config files as the guards.
 
 It checks:
 
-- **Bash commands that post through `gh`:** the same `gh issue` and `gh pr` commands as the shim, and `gh api` calls
+- **Bash commands that post through `gh`:** the same `gh issue` and `gh pr` commands as the shim, behind `env`,
+  `sudo` and the like, and `gh api` calls
   that send fields (`-f`, `-F`, including `@file`) or an `--input` body, unless they're `GET`. A GraphQL query
   is checked when it's a mutation.
 - **`git commit` and `git tag` messages**, from `-m`, `-F` and `--trailer`. What a push sends is the `pre-push`
@@ -165,11 +167,31 @@ It checks:
 A body can come from a heredoc (`--body "$(cat <<'EOF' … EOF)"`), a here-string, a file, or `cat`, `echo` or
 `printf` piped in. A file the same command writes first, as in `cat > body.md <<'EOF'`, is read from the command,
 since the hook runs before it does. Posts inside `$(…)` and backticks are checked too. A body the shell fills in
-only when the command runs, such as `--body "$BODY"`, can't be read beforehand, so the call is denied. Put the text
-in the command, or in a file and pass its path.
+only when the command runs, such as `--body "$BODY"` or what `xargs` adds, can't be read beforehand, so the call is
+denied. Put the text in the command, or in a file and pass its path.
 
-The plugin never approves a call. A clean post goes on to Claude Code's usual permission check. If the hook itself
-fails or times out, the call is denied.
+The plugin never approves a call. A clean post goes on to Claude Code's usual permission check. Its deny holds in
+`bypassPermissions` mode too: a session run with `--permission-mode bypassPermissions` on Claude Code 2.1.302 had
+its leaking post refused.
+
+If the hook itself fails or times out, the call is denied. A hook that can't run at all, because `node` isn't on
+`PATH` or is older than 22.18, denies every Bash call, not only posts. To get out of that:
+
+1. Turn the plugin off, from a terminal:
+
+   ```sh
+   claude plugin disable second-read@second-read
+   ```
+
+2. Install Node 22.18 or newer.
+
+3. Turn the plugin back on:
+
+   ```sh
+   claude plugin enable second-read@second-read
+   ```
+
+Before Claude Code 2.1.295, the hook's `onFailure` setting is ignored, so a hook that crashes lets the call through.
 
 A setup script can tell whether the plugin is in place with `claude plugin list --json`, which lists it as
 `"id": "second-read@second-read"` with `"enabled": true`.

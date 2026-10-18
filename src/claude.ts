@@ -76,10 +76,59 @@ function unwrap(words: string[]): string[] {
     } else if (name === "command" || name === "exec" || name === "nohup" || name === "time" || name === "builtin") {
       i++;
       while (i < words.length && words[i]!.startsWith("-")) i++;
+    } else if (name === "sudo") {
+      i = pastOptions(words, i + 1, "ugChpUTrtDR");
+    } else if (name === "xargs") {
+      // xargs adds arguments from its input, so the command's text is filled in only when it runs.
+      let replace: string | undefined;
+      i = pastOptions(words, i + 1,"adEILnPs", "eil", (flag, value) => {
+        if (flag === "I") replace = value;
+        if (flag === "i" || flag === "--replace") replace = value || "{}";
+      });
+      const added = unknown("the arguments xargs adds");
+      const rest = words.slice(i);
+      if (replace === undefined) return [...rest, added];
+      return rest.map((w) => (w.includes(replace!) ? w.split(replace!).join(added) : w));
     } else {
       return words.slice(i);
     }
   }
+}
+
+// The index past a command's options, as in `sudo -u someone`. `valued` names the short options that take a value,
+// and `joined` those that take one only when it's joined on, as in xargs -i{}.
+function pastOptions(
+  words: string[],
+  start: number,
+  valued: string,
+  joined = "",
+  seen: (flag: string, value: string) => void = () => {},
+): number {
+  let i = start;
+  for (; i < words.length && words[i]!.startsWith("-"); i++) {
+    const word = words[i]!;
+    if (word === "--") return i + 1;
+    if (word.startsWith("--")) {
+      const eq = word.indexOf("=");
+      seen(eq < 0 ? word : word.slice(0, eq), eq < 0 ? "" : word.slice(eq + 1));
+      continue;
+    }
+    for (let j = 1; j < word.length; j++) {
+      const flag = word[j]!;
+      if (!valued.includes(flag)) {
+        if (joined.includes(flag) && j + 1 < word.length) {
+          seen(flag, word.slice(j + 1));
+          break;
+        }
+        seen(flag, "");
+        continue;
+      }
+      const value = j + 1 < word.length ? word.slice(j + 1) : (words[++i] ?? "");
+      seen(flag, value);
+      break;
+    }
+  }
+  return i;
 }
 
 // A file's text, or stdin's for "-". A name the shell fills in is kept as the text, so it's refused unread.
