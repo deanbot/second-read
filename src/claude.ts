@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { KIND_NAMES, type Kind } from "./checks.ts";
-import { parseGh, postNames, postTexts } from "./gh.ts";
+import { parseGh, postNames, postTexts, shortFlag } from "./gh.ts";
 import { output, parseShell, type Stdin, UNKNOWN, UNKNOWN_END, unknown } from "./shell.ts";
 
 export interface Post {
@@ -157,6 +157,7 @@ function ghPosts(args: string[], stdin: Stdin | undefined, dir: string, written:
   ];
 }
 
+// gh api's flags that take a value, as gh 2.92 has them. The rest are switches, -i among them.
 const GH_API_VALUE_FLAGS = new Set(["-X", "--method", "-f", "--raw-field", "-F", "--field", "-H", "--header", "-q",
   "--jq", "-t", "--template", "-p", "--preview", "--hostname", "--cache", "--input"]);
 
@@ -176,8 +177,9 @@ function ghApiPosts(args: string[], read: (file: string) => string, dir: string)
       name = eq < 0 ? arg : arg.slice(0, eq);
       if (eq >= 0) value = arg.slice(eq + 1);
     } else if (arg.startsWith("-") && arg.length > 1) {
-      name = arg.slice(0, 2);
-      if (arg.length > 2) value = arg.slice(arg[2] === "=" ? 3 : 2);
+      const flag = shortFlag(arg, (f) => GH_API_VALUE_FLAGS.has(f));
+      if (flag === undefined) continue;
+      ({ name, value } = flag);
     } else {
       endpoint ??= arg;
       continue;

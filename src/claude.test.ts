@@ -91,6 +91,12 @@ test("bashPosts reads gh api fields and bodies that post, and leaves reads alone
     ["n[1] in the body of gh api repos/example/repo/issues/3/comments", "two"],
   ]);
   assert.deepEqual(texts(`gh api repos/example/repo/pulls/7/comments`), []);
+  // Grouped short flags: -i is a switch, and the flag after it takes the rest or the next argument.
+  assert.deepEqual(texts(`gh api repos/example/repo/issues -if body="Grouped"`), [
+    ["the body field of gh api repos/example/repo/issues", "Grouped"],
+  ]);
+  assert.deepEqual(texts(`gh api repos/example/repo/issues -ifbody="Joined" -iX GET`), []);
+  assert.deepEqual(texts(`gh api repos/example/repo/issues -iq .body`), []);
   assert.deepEqual(texts(`gh api search/issues -X GET -f q="anything"`), []);
   assert.deepEqual(texts(`gh api graphql -f query='query { viewer { login } }'`), []);
   assert.equal(texts(`gh api graphql -f query='mutation { addComment(input: {body: "x"}) { clientMutationId } }'`).length, 1);

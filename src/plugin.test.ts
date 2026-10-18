@@ -110,6 +110,10 @@ test("the hook reads grouped short flags as gh does", () => {
   assert.match(hook(bash(`gh pr create -dt "${LEAKY}"`)).reason, /title of this pull request/);
   assert.match(hook(bash(`gh label create bug -fd "${LEAKY}"`)).reason, /description of this label/);
   assert.equal(hook(bash(`gh pr create -dt "Move the cache" -b "${CLEAN}"`)).denied, false);
+  // Regression: gh api read -if as the switch -i alone, so the field went unchecked.
+  assert.match(hook(bash(`gh api repos/example/repo/issues -if body="${LEAKY}"`)).reason, /body field of gh api/);
+  assert.match(hook(bash(`gh api repos/example/repo/issues -iXPOST -f body="${LEAKY}"`)).reason, /body field/);
+  assert.equal(hook(bash(`gh api repos/example/repo/issues -if body="${CLEAN}"`)).denied, false);
 });
 
 test("the hook checks the names a post gives as branch names are read, and lets a leaked name be renamed", () => {

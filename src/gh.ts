@@ -270,15 +270,9 @@ export function parseGh(args: string[]): GhPost | undefined {
       name = eq < 0 ? arg : arg.slice(0, eq);
       if (eq >= 0) value = arg.slice(eq + 1);
     } else if (arg.startsWith("-") && arg.length > 1) {
-      // Short flags group as gh reads them: the first that takes a value takes the rest of the argument, past an
-      // "=", or the next argument. Those before it are switches, and a switch given "=" takes the rest as its own.
-      let j = 1;
-      for (; j < arg.length && !takesValue(`-${arg[j]}`); j++) {
-        if (arg[j + 1] === "=" && j + 2 < arg.length) break;
-      }
-      if (j === arg.length || !takesValue(`-${arg[j]}`)) continue;
-      name = `-${arg[j]}`;
-      if (j + 1 < arg.length) value = arg.slice(arg[j + 1] === "=" && j + 2 < arg.length ? j + 2 : j + 1);
+      const flag = shortFlag(arg, takesValue);
+      if (flag === undefined) continue;
+      ({ name, value } = flag);
     } else {
       positional.push(arg);
       continue;
@@ -296,6 +290,22 @@ export function parseGh(args: string[]): GhPost | undefined {
   }
   posting.args?.(post, positional.slice(2));
   return post;
+}
+
+// A group of short flags, read as gh reads them: the first that takes a value takes the rest of the argument, past
+// an "=", or the next argument, which `value` is left undefined for. Those before it are switches, and a switch
+// given "=" takes the rest as its own. Undefined when the group is all switches.
+export function shortFlag(
+  arg: string,
+  takesValue: (flag: string) => boolean,
+): { name: string; value: string | undefined } | undefined {
+  let j = 1;
+  for (; j < arg.length && !takesValue(`-${arg[j]}`); j++) {
+    if (arg[j + 1] === "=" && j + 2 < arg.length) return undefined;
+  }
+  if (j === arg.length) return undefined;
+  if (j + 1 === arg.length) return { name: `-${arg[j]}`, value: undefined };
+  return { name: `-${arg[j]}`, value: arg.slice(arg[j + 1] === "=" && j + 2 < arg.length ? j + 2 : j + 1) };
 }
 
 // Each text a posting gh command sends, with where it goes. `read` gives a body file's text, "-" being stdin.
