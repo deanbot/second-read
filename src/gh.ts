@@ -29,15 +29,81 @@ const MERGE_FLAGS: Record<string, Field> = {
   "-F": "bodyFile",
 };
 
+const RELEASE_FLAGS: Record<string, Field> = {
+  "--title": "title",
+  "-t": "title",
+  "--notes": "body",
+  "-n": "body",
+  "--notes-file": "bodyFile",
+  "-F": "bodyFile",
+};
+
+const DESCRIPTION_FLAGS: Record<string, Field> = { "--description": "body", "-d": "body" };
+
 interface Posting {
   kind: Kind;
   flags: Record<string, Field>;
+  // The other flags that take a value, so the value isn't read as an argument. Needed only with `args`.
+  valued?: string[];
+  // Takes in the arguments after the command words, for a command that posts some of them.
+  args?: (post: GhPost, args: string[]) => void;
   noun?: string;
   titleName?: string;
+  bodyName?: string;
+  fileName?: string;
 }
 
 const text = (kind: Kind): Posting => ({ kind, flags: TEXT_FLAGS });
 const comment: Posting = { kind: "comment", flags: COMMENT_FLAGS };
+
+// A post's kind only picks how it's checked, and these check like a comment; each has its own noun.
+const release: Posting = {
+  kind: "comment",
+  flags: RELEASE_FLAGS,
+  noun: "this release",
+  bodyName: "notes",
+};
+
+const repository: Posting = {
+  kind: "comment",
+  flags: DESCRIPTION_FLAGS,
+  noun: "this repository",
+  bodyName: "description",
+};
+
+// A gist's files are a new post of their own, not lines added to the repository's files, so exempt_files never
+// applies to them.
+const gist = (posting: Partial<Posting>): Posting => ({
+  kind: "comment",
+  flags: { "--desc": "body", "-d": "body" },
+  noun: "this gist",
+  bodyName: "description",
+  fileName: "contents",
+  ...posting,
+});
+
+// Each argument is a file to upload, "-" being stdin. With none, it uploads stdin when it's piped in.
+const gistCreate = gist({
+  valued: ["--filename", "-f"],
+  args: (post, files) => {
+    if (files.length > 0) {
+      post.bodyFiles.push(...files);
+    } else {
+      post.bodyFiles.push("-");
+      post.stdinIfPiped = true;
+    }
+  },
+});
+
+const label =(posting: Partial<Posting>): Posting => ({
+  kind: "comment",
+  flags: DESCRIPTION_FLAGS,
+  valued: ["--color", "-c"],
+  noun: "this label",
+  titleName: "name",
+  bodyName: "description",
+  ...posting,
+});
 
 const POSTS: Record<string, Record<string, Posting>> = {
   issue: {
@@ -58,6 +124,30 @@ const POSTS: Record<string, Record<string, Posting>> = {
     reopen: comment,
     merge: { kind: "commit", flags: MERGE_FLAGS, noun: "this merge commit", titleName: "subject" },
   },
+  release: { create: release, new: release, edit: release },
+  gist: {
+    create: gistCreate,
+    new: gistCreate,
+    // gh gist edit <gist> [<file>]: the file replaces the one --filename picks, or is uploaded under the name --add
+    // gives. Without it, --add uploads the file it names.
+    edit: gist({
+      flags: { "--desc": "body", "-d": "body", "--add": "bodyFile", "-a": "bodyFile" },
+      valued: ["--filename", "-f", "--remove", "-r"],
+      args: (post, [, file]) => {
+        if (file !== undefined) post.bodyFiles = [file];
+      },
+    }),
+  },
+  label: {
+    create: label({
+      args: (post, [name]) => {
+        if (name !== undefined) post.title.push(name);
+      },
+    }),
+    // The name it's given now is checked, not the one it had, so a label can be renamed.
+    edit: label({ flags: { ...DESCRIPTION_FLAGS, "--name": "title", "-n": "title" } }),
+  },
+  repo: { create: repository, new: repository, edit: repository },
 };
 
 export interface GhPost {
@@ -65,9 +155,13 @@ export interface GhPost {
   // What the texts are called in a report.
   noun: string;
   titleName: string;
+  bodyName: string;
+  fileName: string;
   title: string[];
   body: string[];
   bodyFiles: string[];
+  // Stdin is read only when it's piped in, never from a terminal.
+  stdinIfPiped?: boolean;
 }
 
 // The text a posting gh command sends, or undefined for any other command, which passes straight through.
@@ -86,13 +180,20 @@ export function parseGh(args: string[]): GhPost | undefined {
     kind: posting.kind,
     noun: posting.noun ?? KIND_NAMES[posting.kind],
     titleName: posting.titleName ?? "title",
+    bodyName: posting.bodyName ?? "body",
+    fileName: posting.fileName ?? posting.bodyName ?? "body",
     title: [],
     body: [],
     bodyFiles: [],
   };
+  // The arguments, the command words first.
+  const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === "--") break;
+    if (arg === "--") {
+      positional.push(...args.slice(i + 1));
+      break;
+    }
     if (arg === "-R" || arg === "--repo") {
       i++;
       continue;
@@ -108,15 +209,20 @@ export function parseGh(args: string[]): GhPost | undefined {
       name = arg.slice(0, 2);
       if (arg.length > 2) value = arg.slice(arg[2] === "=" ? 3 : 2);
     } else {
+      positional.push(arg);
       continue;
     }
     const field = posting.flags[name];
-    if (field === undefined) continue;
+    if (field === undefined) {
+      if (value === undefined && posting.valued?.includes(name)) i++;
+      continue;
+    }
     if (value === undefined) value = args[++i];
     if (value === undefined) continue;
     if (field === "bodyFile") post.bodyFiles.push(value);
     else post[field].push(value);
   }
+  posting.args?.(post, positional.slice(2));
   return post;
 }
 
@@ -125,9 +231,9 @@ export function postTexts(post: GhPost, read: (file: string) => string): [string
   const noun = post.noun;
   return [
     ...post.title.map((t): [string, string] => [`the ${post.titleName} of ${noun}`, t]),
-    ...post.body.map((t): [string, string] => [`the body of ${noun}`, t]),
+    ...post.body.map((t): [string, string] => [`the ${post.bodyName} of ${noun}`, t]),
     ...post.bodyFiles.map((f): [string, string] => [
-      f === "-" ? `the body of ${noun}` : `the body of ${noun}, from ${f}`,
+      f === "-" ? `the ${post.fileName} of ${noun}` : `the ${post.fileName} of ${noun}, from ${f}`,
       read(f),
     ]),
   ];
