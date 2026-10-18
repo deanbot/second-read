@@ -111,12 +111,18 @@ function nameKey(name: string): string {
 const TEMP_FOLDERS = ["/tmp", "/var/tmp", "/private/tmp", "/var/folders", "/private/var/folders"];
 
 // Money and accounts, over folded text. Each entry is [word, pattern]; `allowed_words` switches off a word.
-// A word that's also ordinary dev language (plan, tier, budget, quota) counts only beside a money word.
+// A word that's also ordinary dev language (subscription, plan, tier, budget, quota) counts only beside a money word.
 const MONEY: [string, string][] = [
   ["billing", "billing|billed"],
   ["invoice", "invoices?|invoiced"],
   ["payment", "payments?|(?:pay|paid|paying) for|pay as you go|pay-as-you-go"],
-  ["subscription", "subscriptions?"],
+  [
+    "subscription",
+    "(?:monthly|annual|yearly|weekly|paid|premium|pro|business|enterprise|trial) subscriptions?" +
+      "|subscriptions? (?:fees?|prices?|pricing|costs?|charges?|renewals?|payments?|billing|plans?|tiers?)" +
+      "|(?:(?:upgrad|downgrad)(?:e|es|ed|ing)|cancel(?:s|led|ling|ed|ing)?|renew(?:s|ed|ing)?)" +
+      " (?:my|our|the|your|a|their) subscriptions?",
+  ],
   [
     "spending",
     "spend(?:ing)? (?:limits?|caps?|alerts?)|spending money" +
@@ -126,7 +132,7 @@ const MONEY: [string, string][] = [
   [
     "plan",
     "(?:free|paid|pro|max|plus|team|business|enterprise|premium|pricing|billing|monthly|annual|yearly) plans?" +
-      "|(?:upgrade|downgrade|cancel|change)(?:s|d|ed|ing|led|ling)? (?:my|our|the|your|a|their) plan",
+      "|(?:(?:upgrad|downgrad|chang)(?:e|es|ed|ing)|cancel(?:s|led|ling|ed|ing)?) (?:my|our|the|your|a|their) plan",
   ],
   ["tier", "(?:free|paid|pro|premium) tiers?"],
   ["pricing", "pricing"],

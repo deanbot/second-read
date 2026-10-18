@@ -144,7 +144,15 @@ test("money and account words", () => {
   assert.deepEqual(found("I'm on the Max plan"), [["money (plan)", "Max plan"]]);
   assert.deepEqual(found("we upgraded our plan"), [["money (plan)", "upgraded our plan"]]);
   assert.deepEqual(found("hit the usage limits again"), [["money (usage limit)", "usage limits"]]);
-  assert.deepEqual(found("cancel the subscription"), [["money (subscription)", "subscription"]]);
+  assert.deepEqual(found("cancel the subscription"), [["money (subscription)", "cancel the subscription"]]);
+  assert.deepEqual(found("my monthly subscription"), [["money (subscription)", "monthly subscription"]]);
+  assert.deepEqual(found("two paid subscriptions"), [["money (subscription)", "paid subscriptions"]]);
+  assert.deepEqual(found("the subscription fee went up"), [["money (subscription)", "subscription fee"]]);
+  assert.deepEqual(found("its subscription renewal"), [["money (subscription)", "subscription renewal"]]);
+  assert.deepEqual(found("upgrading our subscription"), [["money (subscription)", "upgrading our subscription"]]);
+  assert.deepEqual(found("we cancelled the subscription"), [["money (subscription)", "cancelled the subscription"]]);
+  assert.deepEqual(found("upgrading my plan"), [["money (plan)", "upgrading my plan"]]);
+  assert.deepEqual(found("changing the plan"), [["money (plan)", "changing the plan"]]);
   assert.deepEqual(found("not paying for that"), [["money (payment)", "paying for"]]);
   assert.deepEqual(found("my credit card"), [["money (card)", "credit card"]]);
   assert.deepEqual(found("over our monthly budget"), [["money (budget)", "monthly budget"]]);
@@ -173,6 +181,13 @@ test("dev words near money words are not money", () => {
     found(
       "Keep the size budget and the error budget. Raise the disk quota and the API quota. " +
         "Spending more time on tests. Overages in the token counter. Budgets for latency.",
+    ),
+    [],
+  );
+  assert.deepEqual(
+    found(
+      "The subscription closes when the stream ends. Log the subscription id. Subscriptions for each topic. " +
+        "A GraphQL subscription, then unsubscribe. Subscribe to the paid event.",
     ),
     [],
   );

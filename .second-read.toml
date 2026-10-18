@@ -1,5 +1,5 @@
 # Money words this repository's README and PLAN name on purpose, as the kinds of detail second-read looks for.
-allowed_words = ["billing", "payment", "subscription", "usage limit"]
+allowed_words = ["billing", "payment", "usage limit"]
 
 # The patterns and the tests are made of the paths, emails and money words the check looks for. pre-push checks
 # what they add for private terms only.
