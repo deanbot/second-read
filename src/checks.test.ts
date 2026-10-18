@@ -146,6 +146,8 @@ test("money and account words", () => {
   assert.deepEqual(found("hit the usage limits again"), [["money (usage limit)", "usage limits"]]);
   assert.deepEqual(found("cancel the subscription"), [["money (subscription)", "cancel the subscription"]]);
   assert.deepEqual(found("my monthly subscription"), [["money (subscription)", "monthly subscription"]]);
+  assert.deepEqual(found("on a free subscription"), [["money (subscription)", "free subscription"]]);
+  assert.deepEqual(found("check my subscription"), [["money (subscription)", "my subscription"]]);
   assert.deepEqual(found("two paid subscriptions"), [["money (subscription)", "paid subscriptions"]]);
   assert.deepEqual(found("the subscription fee went up"), [["money (subscription)", "subscription fee"]]);
   assert.deepEqual(found("its subscription renewal"), [["money (subscription)", "subscription renewal"]]);

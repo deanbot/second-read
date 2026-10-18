@@ -118,7 +118,7 @@ const MONEY: [string, string][] = [
   ["payment", "payments?|(?:pay|paid|paying) for|pay as you go|pay-as-you-go"],
   [
     "subscription",
-    "(?:monthly|annual|yearly|weekly|paid|premium|pro|business|enterprise|trial) subscriptions?" +
+    "(?:my|monthly|annual|yearly|weekly|free|paid|premium|pro|business|enterprise|trial) subscriptions?" +
       "|subscriptions? (?:fees?|prices?|pricing|costs?|charges?|renewals?|payments?|billing|plans?|tiers?)" +
       "|(?:(?:upgrad|downgrad)(?:e|es|ed|ing)|cancel(?:s|led|ling|ed|ing)?|renew(?:s|ed|ing)?)" +
       " (?:my|our|the|your|a|their) subscriptions?",
