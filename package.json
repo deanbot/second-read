@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsc",
     "test": "tsc && node --test \"src/**/*.test.ts\"",
+    "eval:judge": "node src/judge.eval.test.ts --runs 2",
     "prepack": "tsc"
   },
   "repository": {

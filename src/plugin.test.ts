@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { fakeClaude, transcript } from "./fake-claude.test.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const cli = join(root, "dist", "cli.js");
@@ -22,19 +23,34 @@ writeFileSync(join(config, "config.toml"), `terms = ["${TERM}"]\n`);
 writeFileSync(join(repo, ".second-read.toml"), 'exempt_files = ["src/**/*.test.ts"]\n');
 writeFileSync(join(scratch, "gitconfig"), "[user]\n\tname = Example\n\temail = example@example.com\n");
 
+// The model check runs a made-up claude, which passes every post unless a test says otherwise.
+const fake = fakeClaude(join(scratch, "bin"));
+const USER_TURN = "Please move the cache. I want it gone before my sister visits, she says the laptop is slow.";
+const transcriptPath = join(scratch, "transcript.jsonl");
+writeFileSync(transcriptPath, transcript([USER_TURN]));
+
 const env: NodeJS.ProcessEnv = {
-  PATH: process.env.PATH ?? "",
+  PATH: `${fake.dir}:${process.env.PATH ?? ""}`,
   HOME: home,
   GIT_CONFIG_GLOBAL: join(scratch, "gitconfig"),
   GIT_CONFIG_NOSYSTEM: "1",
   SECOND_READ_CONFIG_DIR: config,
+  CLAUDE_PLUGIN_DATA: join(scratch, "data"),
 };
 // The repository's allowlist is read only inside a git repository.
 assert.equal(spawnSync("git", ["init", "-q", repo], { env }).status, 0);
 
-function hook(call: string | object, command = [process.execPath, cli, "claude-hook"]) {
-  const input = typeof call === "string" ? call : JSON.stringify({ hook_event_name: "PreToolUse", cwd: repo, ...call });
-  const result = spawnSync(command[0]!, command.slice(1), { cwd: scratch, input, encoding: "utf8", env });
+function hook(call: string | object, command = [process.execPath, cli, "claude-hook"], extra: NodeJS.ProcessEnv = {}) {
+  const input =
+    typeof call === "string"
+      ? call
+      : JSON.stringify({ hook_event_name: "PreToolUse", cwd: repo, transcript_path: transcriptPath, ...call });
+  const result = spawnSync(command[0]!, command.slice(1), {
+    cwd: scratch,
+    input,
+    encoding: "utf8",
+    env: { ...env, ...extra },
+  });
   if (result.error) throw result.error;
   assert.equal(result.status, 0, result.stderr);
   // Never "allow", which would skip the user's own permission prompt.
@@ -190,6 +206,68 @@ test("the hook checks a file a GitHub tool writes as the lines it adds, exempt f
   assert.equal(hook(push("src/cache.test.ts", fixture)).denied, false);
   assert.match(hook(push("src/cache.ts", fixture)).reason, /home path/);
   assert.match(hook(push("src/cache.test.ts", `// ${TERM}\n`)).reason, /private term/);
+});
+
+const prBody = (body: string) => bash(`gh pr create --title "Move the cache" --body "${body}"`);
+
+test("the model check runs once for a post the word check passes, and never for other calls", () => {
+  fake.mode("clean");
+  assert.equal(hook(bash(`ls -la && npm test`)).denied, false);
+  assert.equal(hook(bash(`gh pr view 5`)).denied, false);
+  assert.equal(hook(bash(`gh pr create --title "Move the cache" --body "${LEAKY}"`)).denied, true);
+  assert.equal(fake.calls().length, 0);
+  assert.equal(hook(bash(`gh pr create --title "Move the cache" --body "${CLEAN}"`)).denied, false);
+  const calls = fake.calls();
+  assert.equal(calls.length, 1);
+  const input = JSON.parse(calls[0]!.input);
+  assert.deepEqual(input.user_turns, [USER_TURN]);
+  assert.deepEqual(input.post, [
+    { where: "the title of this pull request", text: "Move the cache" },
+    { where: "the body of this pull request", text: CLEAN },
+  ]);
+});
+
+test("the model check refuses what it flags, and anything it can't judge", () => {
+  fake.mode("private");
+  const flagged = hook(prBody("Moves the cache before a family visit.")).reason;
+  assert.match(flagged, /the model check found what the user said in private[^]*"before my sister visits"/);
+  fake.mode("fail");
+  assert.match(hook(prBody(CLEAN)).reason, /the model check failed[^]*529 overloaded[^]*model_check option/);
+  assert.equal(fake.calls().length, 2);
+  fake.mode("malformed");
+  assert.match(hook(prBody(CLEAN)).reason, /the model check failed[^]*wasn't JSON/);
+  fake.mode("clean");
+  assert.match(hook({ ...prBody(CLEAN), transcript_path: join(scratch, "missing.jsonl") }).reason, /model check failed/);
+});
+
+test("the model check reads no file a GitHub tool writes, and is skipped when it's off or judging", () => {
+  fake.mode("clean");
+  const push = {
+    tool_name: "mcp__github__push_files",
+    tool_input: { owner: "example", repo: "repo", branch: "topic", message: "Add a test", files: [
+      { path: "src/cache.ts", content: "export const cache = 1;\n" },
+    ] },
+  };
+  assert.equal(hook(push).denied, false);
+  assert.deepEqual(JSON.parse(fake.calls()[0]!.input).post.map((p: { text: string }) => p.text), ["topic", "Add a test", "src/cache.ts"]);
+  fake.mode("private");
+  assert.equal(hook(prBody(CLEAN), undefined, { CLAUDE_PLUGIN_OPTION_MODEL_CHECK: "false" }).denied, false);
+  assert.equal(hook(prBody(CLEAN), undefined, { SECOND_READ_JUDGING: "1" }).denied, false);
+  assert.equal(fake.calls().length, 0);
+  assert.equal(hook(prBody(CLEAN), undefined, { CLAUDE_PLUGIN_OPTION_MODEL: "sonnet" }).denied, true);
+  const args = fake.calls()[0]!.args;
+  assert.equal(args[args.indexOf("--model") + 1], "sonnet");
+  fake.mode("clean");
+});
+
+test("the plugin's options and the hook's timeout leave the model check room to answer", () => {
+  const plugin = JSON.parse(readFileSync(join(root, ".claude-plugin", "plugin.json"), "utf8"));
+  assert.equal(plugin.userConfig.model_check.type, "boolean");
+  assert.equal(plugin.userConfig.model_check.default, true);
+  assert.equal(plugin.userConfig.model.default, "haiku");
+  const hooks = JSON.parse(readFileSync(join(root, "adapters", "claude-code", "hooks.json"), "utf8"));
+  // The judge is killed at 90 seconds, so its own reason is given before the hook times out.
+  assert.ok(hooks.hooks.PreToolUse[0].hooks[0].timeout > 90);
 });
 
 test("the command the plugin's hooks.json names runs the hook from the source", () => {

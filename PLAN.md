@@ -19,8 +19,10 @@ So the check has to run **before** a post goes out, and it can't rely on the per
   changed, so what goes out is always what the author or agent wrote.
 - **Private words stay private.** The list of private words lives on the user's machine, outside every repository.
   A repository may check in only an allowlist of words that are fine to post there.
-- **Local only.** The check reads text on stdin and answers. It sends nothing anywhere. Only the sweep reads from
-  GitHub, through the user's own `gh`.
+- **Local only.** The check reads text on stdin and answers. The check, the git hooks and the `gh` shim send
+  nothing anywhere. Only the sweep reads from GitHub, through the user's own `gh`. Only the Claude Code adapter's model
+  check sends text: the post and the user's turns, to the model provider the session already uses. The user can
+  turn it off.
 - **Tool-neutral core, thin adapters.** One command does the checking. git, `gh` and each agent tool call it.
 - **A safety net, not a boundary.** It catches slips by agents and people acting in good faith. It is not meant to
   stop someone set on getting text past it.
@@ -92,6 +94,25 @@ What the guards can't see: an agent that posts through its own GitHub tool, or t
   the work. A post says what changed, not why the user personally decided it, unless that reason is about the work.
   The check also looks for other paraphrased details: a description of the user's machine, home, accounts or
   private projects.
+  - **How it runs:** the plugin's command hook runs it only on a call whose posts the word check passes, so other
+    calls never wait on a model. A prompt hook can't see the conversation, and an agent hook is experimental, with
+    no documented behaviour on failure. The hook runs `claude -p` with no tools, MCP servers or hooks, from an
+    empty folder, and asks for a verdict that fits a JSON schema.
+  - **What it reads:** the text turns the user typed, from the session's transcript, newest first up to 60,000
+    characters, and each text the call posts apart from file contents, which are code. Both are given as JSON, as
+    data.
+  - **Fails closed:** a verdict that flags the post refuses it, with the post's words and the user's. So does a
+    timeout (90 seconds), a crash, output that doesn't fit the schema, a missing transcript, or one with no user
+    turn, since its format isn't documented. A quick crash is tried once more, since it's more likely the API than
+    the post.
+  - **Options:** `model_check` turns it off, and `model` picks the model, `haiku` by default.
+  - **Its limits:** once the account reaches its usage limit, every post is refused until the limit resets or
+    the check is turned off. A reason given before the cap, or before a compaction or `/clear`, isn't seen. The transcript
+    is written asynchronously, so the newest turn, the likeliest to lead to a post, may be missing. It was there
+    in each headless run tried on Claude Code 2.1.302: a new session, a resumed one, and a call from a subagent,
+    whose hook is given the main session's transcript. Interactive sessions weren't tried. The hook input's
+    `prompt_id` matched the newest turn's `promptId` in the transcript, so a missing turn could be detected. A paraphrase the model misses goes out. Text the user pasted from elsewhere can try to steer it,
+    which fits a safety net, not a boundary.
 - **Others** (Gemini CLI, Codex, Kiro, …): one adapter each, written from that tool's current hook or extension docs
   when someone uses it. Where a tool has no hook, the git and `gh` guards still apply.
 
