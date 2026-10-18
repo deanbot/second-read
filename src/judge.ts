@@ -20,7 +20,7 @@ const TIMEOUT_MS = 90_000;
 const QUICK_MS = 10_000;
 
 const OFF_TEXT =
-  "To post without the model check, turn off second-read's model_check option in /config; the word check still runs.";
+  "To post without the model check, turn off second-read's model_check option in /config, or in /plugin under second-read; the word check still runs.";
 
 export const RULE = `You check a post that an AI coding agent is about to publish on a public repository, for things the user told the agent in private.
 

@@ -203,12 +203,13 @@ A reason about the work, such as a bug, a release or a code style you prefer, is
   contents. It runs `claude -p` with no tools, so they go only to the model provider your session already uses, and
   each check counts toward your usage limit or API billing.
 - **When it fails:** a timeout (90 seconds), a crash, or an answer it can't read refuses the post, and the reason
-  says why. A crash within a few seconds, such as an overloaded API, is tried once more first.
+  says why. A crash within a few seconds, such as an overloaded API, is tried once more first. Once your account
+  reaches its usage limit, every post is refused until the limit resets or you turn the model check off.
 - **What it misses:** a reason you gave earlier than the 60,000 characters, or before a compaction or `/clear`. A
   paraphrase the model doesn't spot. Text you pasted from elsewhere can try to steer it.
 
-To turn it off, or pick another model than `haiku`, open `/config` and change second-read's **Model check** or
-**Model check's model**. The word check keeps running either way.
+To turn it off, or pick another model than `haiku`, change second-read's **Model check** or **Model check's model**
+in `/config`, or in `/plugin` under second-read. The word check keeps running either way.
 
 The plugin never approves a call. A clean post goes on to Claude Code's usual permission check. Its deny holds in
 `bypassPermissions` mode too: a session run with `--permission-mode bypassPermissions` on Claude Code 2.1.302 had

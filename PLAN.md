@@ -106,7 +106,8 @@ What the guards can't see: an agent that posts through its own GitHub tool, or t
     turn, since its format isn't documented. A quick crash is tried once more, since it's more likely the API than
     the post.
   - **Options:** `model_check` turns it off, and `model` picks the model, `haiku` by default.
-  - **Its limits:** a reason given before the cap, or before a compaction or `/clear`, isn't seen. The transcript
+  - **Its limits:** once the account reaches its usage limit, every post is refused until the limit resets or
+    the check is turned off. A reason given before the cap, or before a compaction or `/clear`, isn't seen. The transcript
     is written asynchronously, so the newest turn, the likeliest to lead to a post, may be missing. It was there
     in each headless run tried on Claude Code 2.1.302: a new session, a resumed one, and a call from a subagent,
     whose hook is given the main session's transcript. Interactive sessions weren't tried. The hook input's
