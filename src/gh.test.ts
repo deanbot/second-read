@@ -134,16 +134,19 @@ test("parseGh reads a release's title, notes and tag", () => {
   assert.deepEqual(names(["release", "edit", "old", "--draft"]), []);
 });
 
-test("parseGh reads the label of each asset a release uploads, and the file name of one without", () => {
+test("parseGh reads the file name of each asset a release uploads, and its label", () => {
   for (const args of [["create", "v1"], ["new", "-d", "v1"], ["upload", "--clobber", "v1"]]) {
     const command = ["release", ...args, "dist/app.tgz#App for Linux", "dist/sub/notes.txt", "#odd.txt", "x.zip#"];
     assert.deepEqual(texts(command).slice(-2), [
       ["the label of an asset of this release", "App for Linux"],
       ["the label of an asset of this release", ""],
     ]);
+    // A labeled asset's file name is in its download URL.
     assert.deepEqual(names(command).filter(([where]) => where.includes("asset")), [
+      ["the file name of an asset of this release", "app.tgz"],
       ["the file name of an asset of this release", "notes.txt"],
       ["the file name of an asset of this release", "#odd.txt"],
+      ["the file name of an asset of this release", "x.zip"],
     ]);
   }
   // A label runs from the first "#", and the asset after the tag is the first.
@@ -161,6 +164,7 @@ test("parseGh hands each asset gh expands as a glob to be matched, but not one w
     ["the file name of an asset of this release", "Matches app-?.zip"],
     ["the file name of an asset of this release", "Matches [ab].txt"],
     ["the file name of an asset of this release", "Matches a\\b"],
+    ["the file name of an asset of this release", "*.tgz"],
   ]);
   // One that starts with "#" is neither labeled nor expanded.
   assert.deepEqual(names(["release", "upload", "v1", "#*.tgz"]), [["the file name of an asset of this release", "#*.tgz"]]);

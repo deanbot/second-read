@@ -145,10 +145,11 @@ test("the hook checks a merge commit's author email as an address in a commit", 
   assert.match(merge(`-A "$EMAIL"`).reason, /can't check what this command posts/);
 });
 
-test("the hook checks each release asset's label, and the file name of one without", () => {
+test("the hook checks each release asset's file name and label", () => {
   assert.match(hook(bash(`gh release create v1 "dist/app.tgz#${LEAKY}"`)).reason, /label of an asset of this release/);
   assert.match(hook(bash(`gh release upload v1 dist/app.tgz#${TERM}`)).reason, /label of an asset of this release/);
   assert.match(hook(bash(`gh release upload v1 dist/${TERM}.tgz`)).reason, /file name of an asset of this release/);
+  assert.match(hook(bash(`gh release create v1 "dist/${TERM}.tgz#Build"`)).reason, /file name of an asset of this release/);
   assert.equal(hook(bash(`gh release upload v1 dist/${TERM}/app.tgz "dist/app.tgz#App for Linux"`)).denied, false);
   // A glob is expanded only when the command runs, past files it may make first.
   const glob = hook(bash(`npm pack --pack-destination dist && gh release upload v1 dist/*.tgz`)).reason;

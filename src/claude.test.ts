@@ -68,7 +68,9 @@ test("bashPosts reads the names a gh post gives, marked to be checked as names",
   ]);
   // A "#" inside a word starts a label, not a comment.
   assert.deepEqual(names(`gh release upload v1 dist/app.tgz#App dist/notes.txt 'dist/a.zip#For Linux'`), [
+    ["the file name of an asset of this release", "app.tgz", true],
     ["the file name of an asset of this release", "notes.txt", true],
+    ["the file name of an asset of this release", "a.zip", true],
     ["the label of an asset of this release", "App", false],
     ["the label of an asset of this release", "For Linux", false],
   ]);
@@ -97,6 +99,7 @@ test("bashPosts marks an asset gh or the shell expands as a glob, and one the sh
   }
   // gh never expands a labeled asset.
   assert.deepEqual(texts(`gh release upload v1 'dist/*.tgz#All of them'`), [
+    ["the file name of an asset of this release", "*.tgz"],
     ["the label of an asset of this release", "All of them"],
   ]);
 });

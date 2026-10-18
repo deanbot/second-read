@@ -1184,7 +1184,7 @@ test("the gh shim checks a merge commit's author email as an address in a commit
   assert.equal(gh(["pr", "merge", "5", "-A", "someone@example.com"]).status, 3);
 });
 
-test("the gh shim checks each release asset's label, and the file name of one without", () => {
+test("the gh shim checks each release asset's file name and label", () => {
   const { gh, cwd, called } = shimSetup();
   mkdirSync(join(cwd, "dist", TERM), { recursive: true });
   for (const file of ["app.tgz", `${TERM}.tgz`, `.${TERM}`, `${TERM}/app.tgz`]) writeFileSync(join(cwd, "dist", file), "");
@@ -1193,6 +1193,8 @@ test("the gh shim checks each release asset's label, and the file name of one wi
     [["release", "upload", "v1", `dist/app.tgz#Port ${TERM}`], "the label of an asset of this release"],
     [["release", "create", "v1", `dist/${TERM}.tgz`], "the file name of an asset of this release"],
     [["release", "upload", "--clobber", "v1", `dist/${TERM}.tgz`], "the file name of an asset of this release"],
+    // A labeled asset's file name is in its download URL.
+    [["release", "create", "v1", `dist/${TERM}.tgz#Build`], "the file name of an asset of this release"],
     // gh expands an asset without a label as a glob, dot files and all.
     [["release", "upload", "v1", "dist/*.tgz"], "the file name of an asset of this release"],
     [["release", "upload", "v1", "dist/.*"], "the file name of an asset of this release"],

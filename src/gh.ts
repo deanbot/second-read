@@ -80,14 +80,14 @@ const release = (posting: Partial<Posting>): Posting => ({
   ...posting,
 });
 
-// Each asset is "<file>#<label>" or "<file>", and is uploaded under its file's name. A label is shown on the release
-// page in place of the name. gh expands an asset with no "#" as a glob; one that starts with "#" has no label. One
-// the shell fills in is kept whole, to be refused unread.
+// Each asset is "<file>#<label>" or "<file>", and is uploaded under its file's name, which is in its download URL
+// even when a label is shown on the release page. One that starts with "#" has no label, and one the shell fills in
+// is read whole, to be refused unread.
 const assets = (post: GhPost, args: string[]) => {
   for (const arg of args) {
+    post.assets.push(arg);
     const at = arg.includes(UNKNOWN) ? -1 : arg.indexOf("#");
     if (at > 0) post.labels.push(arg.slice(at + 1));
-    else post.assets.push(arg);
   }
 };
 
@@ -245,7 +245,7 @@ export interface GhPost {
   names: string[];
   // A merge commit's author's address.
   emails: string[];
-  // The release assets uploaded with a label, and the files of those without one.
+  // The labels of the release assets uploaded with one, and every asset as it was given.
   labels: string[];
   assets: string[];
   // Stdin is read only when it's piped in, never from a terminal.
@@ -350,12 +350,14 @@ export function postTexts(post: GhPost, read: (file: string) => string): [string
   ];
 }
 
-// Each name a posting gh command gives, with where it goes. A name is checked as a branch name is. `glob` gives the
-// names of the files an asset that gh expands as a glob matches.
+// Each name a posting gh command gives, with where it goes. A name is checked as a branch name is. gh expands an
+// asset with no "#" as a glob, and `glob` gives the names of the files it matches.
 export function postNames(post: GhPost, glob: (pattern: string) => string[]): [string, string][] {
   const files = post.assets.flatMap((a) => {
     if (a.includes(UNKNOWN)) return [a];
-    return !a.includes("#") && GLOB_META.test(a) ? glob(a) : [basename(a)];
+    const at = a.indexOf("#");
+    if (at > 0) return [basename(a.slice(0, at))];
+    return at < 0 && GLOB_META.test(a) ? glob(a) : [basename(a)];
   });
   return [
     ...post.names.map((n): [string, string] => [`the ${post.nameName} of ${post.noun}`, n]),

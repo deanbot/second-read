@@ -128,8 +128,8 @@ second-read shim install     # writes a gh shim, and says which folder to put ah
 - **The `gh` shim** checks `--title`, `--body`, `--body-file` and a body read from stdin, for `gh issue` and
   `gh pr` `create`, `edit` and `comment`, and `gh pr review`. It also checks the `--comment` that `close` and
   `reopen` leave, and the `--subject`, body and `--author-email` of `gh pr merge`'s merge commit. It checks a
-  release's title, notes and tag, and the label of each asset `gh release create` or `gh release upload` sends, or
-  its file name when it has no label, a gist's description and the files it uploads, stdin included, with the name
+  release's title, notes and tag, and the file name and any label of each asset `gh release create` or
+  `gh release upload` sends, a gist's description and the files it uploads, stdin included, with the name
   each is uploaded under, a label's name and description, and a repository's name and description, on
   `gh repo rename` too. A name is checked as a branch name is, and only the new one, so a leaked name can be renamed
   away. Then it runs the real `gh` with the same arguments and input. Every other command, `gh api` included, passes
