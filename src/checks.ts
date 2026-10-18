@@ -3,6 +3,14 @@ import { escapeRegExp, fold, type Folded, originalSpan, termPattern, wordPattern
 export const KINDS = ["commit", "issue", "pr", "comment", "review"] as const;
 export type Kind = (typeof KINDS)[number];
 
+export const KIND_NAMES: Record<Kind, string> = {
+  commit: "this commit message",
+  issue: "this issue",
+  pr: "this pull request",
+  comment: "this comment",
+  review: "this review",
+};
+
 export type Category =
   | "home path"
   | "temp folder"

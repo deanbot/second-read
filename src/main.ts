@@ -1,7 +1,16 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { check, checkTerms, type Finding, type Identity, KINDS, type Kind, type Rules } from "./checks.ts";
+import {
+  check,
+  checkTerms,
+  type Finding,
+  type Identity,
+  KIND_NAMES,
+  KINDS,
+  type Kind,
+  type Rules,
+} from "./checks.ts";
 import {
   configDir,
   exemptMatcher,
@@ -12,7 +21,8 @@ import {
   USER_FILE,
   USER_FILE_TEMPLATE,
 } from "./config.ts";
-import { findRealGh, isShim, parseGh, shimScript } from "./gh.ts";
+import { bashPosts, firstUnknown, isGithubTool, mcpPosts, type Post } from "./claude.ts";
+import { findRealGh, isShim, parseGh, postTexts, shimScript } from "./gh.ts";
 import {
   type AllowlistChange,
   allowlistChanges,
@@ -34,6 +44,7 @@ import {
   uninstallHooks,
   uninstallManaged,
 } from "./git.ts";
+import { UNKNOWN } from "./shell.ts";
 
 export interface Io {
   argv: string[];
@@ -61,19 +72,10 @@ check exits 0 when the text is clean, 1 with findings, and 2 when the check itse
 
 const FIX_TEXT = "fix the text and try again";
 
-
-const KIND_NAMES: Record<Kind, string> = {
-  commit: "this commit message",
-  issue: "this issue",
-  pr: "this pull request",
-  comment: "this comment",
-  review: "this review",
-};
-
 class UsageError extends Error {}
 
 // The commands that check text. When one fails, whatever called it refuses the post.
-const CHECKS = ["check", "hook", "gh-shim"];
+const CHECKS = ["check", "hook", "gh-shim", "claude-hook"];
 
 export async function main(io: Io): Promise<number> {
   try {
@@ -103,6 +105,9 @@ async function run(io: Io): Promise<number> {
       return runShimSetup(io, args);
     case "gh-shim":
       return runShim(io, args);
+    case "claude-hook":
+      if (args.length > 0) throw new UsageError(`claude-hook takes no arguments`);
+      return runClaudeHook(io);
     case "help":
     case "--help":
     case "-h":
@@ -129,11 +134,11 @@ function parseCheckArgs(args: string[]): { kind?: Kind } {
   return kind === undefined ? {} : { kind };
 }
 
-// Your config and the repository's allowlist, from the repository at `io.cwd`: the one being posted to.
-function loadRules(io: Io): { identity: Identity; rules: Rules; exemptFiles: string[] } {
+// Your config and the repository's allowlist, from the repository at `cwd`: the one being posted to.
+function loadRules(io: Io, cwd = io.cwd): { identity: Identity; rules: Rules; exemptFiles: string[] } {
   const identity = io.identity();
   const user = loadUserConfig(join(configDir(io.env, io.platform, identity.home), USER_FILE));
-  const repoPath = findRepoConfig(io.cwd);
+  const repoPath = findRepoConfig(cwd);
   const repo = repoPath === undefined ? undefined : loadRepoConfig(repoPath, user.terms);
   return { identity, rules: mergeRules(user, repo), exemptFiles: repo?.exemptFiles ?? [] };
 }
@@ -401,17 +406,9 @@ async function runShim(io: Io, args: string[]): Promise<number> {
   let input: Buffer | undefined;
   if (post) {
     const { identity, rules } = loadRules(io);
-    const noun = KIND_NAMES[post.kind];
-    const texts: [string, string][] = [
-      ...post.title.map((t): [string, string] => [`the title of ${noun}`, t]),
-      ...post.body.map((t): [string, string] => [`the body of ${noun}`, t]),
-    ];
-    for (const file of post.bodyFiles) {
-      if (file === "-") {
-        input ??= await io.readStdin();
-        texts.push([`the body of ${noun}`, input.toString("utf8")]);
-      } else texts.push([`the body of ${noun}, from ${file}`, readFileSync(resolve(io.cwd, file), "utf8")]);
-    }
+    if (post.bodyFiles.includes("-")) input = await io.readStdin();
+    const stdin = input?.toString("utf8") ?? "";
+    const texts = postTexts(post, (file) => (file === "-" ? stdin : readFileSync(resolve(io.cwd, file), "utf8")));
     const sections = texts
       .map(([where, text]) => ({ where, findings: check(text, { identity, rules, kind: post.kind }) }))
       .filter((s) => s.findings.length > 0);
@@ -433,6 +430,58 @@ async function runShim(io: Io, args: string[]): Promise<number> {
   });
   if (result.error) throw new Error(`can't run ${gh}: ${result.error.message}`);
   return exitStatus(result);
+}
+
+// What the Claude Code plugin's PreToolUse hook runs, with the tool call as JSON on stdin. A post with findings, or
+// one that can't be checked, is denied, and the reason goes to Claude. Otherwise it prints nothing and the call
+// goes on as it would have: allowing it would skip the user's own permission prompt.
+async function runClaudeHook(io: Io): Promise<number> {
+  let reason: string | undefined;
+  try {
+    reason = claudeRefusal(io, JSON.parse((await io.readStdin()).toString("utf8")));
+  } catch (e) {
+    reason = `second-read: the check failed, so this call was stopped: ${e instanceof Error ? e.message : String(e)}\n`;
+  }
+  if (reason !== undefined) {
+    const decision = { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason };
+    io.out(`${JSON.stringify({ hookSpecificOutput: decision })}\n`);
+  }
+  return EXIT.clean;
+}
+
+function claudeRefusal(io: Io, call: unknown): string | undefined {
+  if (call === null || typeof call !== "object") throw new Error("the hook was given no tool call");
+  const { tool_name: tool, tool_input: input, cwd: callCwd } = call as Record<string, unknown>;
+  const cwd = typeof callCwd === "string" ? callCwd : io.cwd;
+  let posts: Post[] = [];
+  if (tool === "Bash") {
+    const command = (input as { command?: unknown } | undefined)?.command;
+    if (typeof command !== "string") throw new Error("the Bash call has no command");
+    posts = bashPosts(command, cwd, io.env.HOME || io.env.USERPROFILE || cwd);
+  } else if (typeof tool === "string" && isGithubTool(tool)) {
+    posts = mcpPosts(tool, input, cwd);
+  }
+  if (posts.length === 0) return undefined;
+  const unread = posts.filter((p) => p.text.includes(UNKNOWN));
+  if (unread.length > 0) {
+    const rows = unread.map((p) => `  ${p.where}: ${firstUnknown(p.text)}\n`);
+    return (
+      `second-read: can't check what this command posts, since the shell fills part of it in only when it runs.\n` +
+      rows.join("") +
+      `Nothing was posted; write the text out in the command, or in a file passed by its path, and try again.\n`
+    );
+  }
+  const rules = new Map<string, ReturnType<typeof loadRules>>();
+  const sections = posts
+    .map((post) => {
+      if (!rules.has(post.cwd)) rules.set(post.cwd, loadRules(io, post.cwd));
+      const { identity, rules: merged, exemptFiles } = rules.get(post.cwd)!;
+      const exempt = post.file !== undefined && exemptMatcher(exemptFiles)(post.file);
+      const options = { identity, rules: merged, kind: post.kind };
+      return { where: post.where, findings: exempt ? checkTerms(post.text, options) : check(post.text, options) };
+    })
+    .filter((s) => s.findings.length > 0);
+  return sections.length > 0 ? report(sections, FIX_TEXT) : undefined;
 }
 
 function runInit(io: Io): number {

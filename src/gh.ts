@@ -1,6 +1,6 @@
 import { accessSync, closeSync, constants, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
-import type { Kind } from "./checks.ts";
+import { KIND_NAMES, type Kind } from "./checks.ts";
 import { shQuote } from "./git.ts";
 
 export const SHIM_MARKER = "# Added by second-read: the gh shim.";
@@ -60,6 +60,19 @@ export function parseGh(args: string[]): GhPost | undefined {
   }
   const kind = POSTS[words[0] ?? ""]?.[words[1] ?? ""];
   return kind === undefined ? undefined : { kind, ...post };
+}
+
+// Each text a posting gh command sends, with where it goes. `read` gives a body file's text, "-" being stdin.
+export function postTexts(post: GhPost, read: (file: string) => string): [string, string][] {
+  const noun = KIND_NAMES[post.kind];
+  return [
+    ...post.title.map((t): [string, string] => [`the title of ${noun}`, t]),
+    ...post.body.map((t): [string, string] => [`the body of ${noun}`, t]),
+    ...post.bodyFiles.map((f): [string, string] => [
+      f === "-" ? `the body of ${noun}` : `the body of ${noun}, from ${f}`,
+      read(f),
+    ]),
+  ];
 }
 
 export function shimScript(command: string[]): string {
