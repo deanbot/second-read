@@ -89,6 +89,13 @@ test("a common default machine name is not flagged, even numbered, but one with 
   assert.deepEqual(found("maple syrup", {}, chosen), [["machine name", "maple"]]);
 });
 
+test("a default machine name is still flagged as an account name, which is often the person's own", () => {
+  for (const user of ["kali", "mac", "penguin"]) {
+    const who = { ...identity, user, home: `/home/${user}`, host: "MacBook-Pro.local" };
+    assert.deepEqual(found(`Thanks, ${user}!`, {}, who), [["account name", user]], user);
+  }
+});
+
 test("allowed names switch off an account or machine name that's an ordinary word, and allowed words don't", () => {
   const who = { ...identity, user: "maple", home: "/Users/maple", host: "juniper.local" };
   assert.deepEqual(found("maple syrup and juniper", {}, who), [

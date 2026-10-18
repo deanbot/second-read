@@ -82,13 +82,19 @@ export const DEFAULT_ALLOWED_PATHS = [
   "~/.profile",
 ];
 
-// Account and machine names too generic to flag: ones a system or an installer sets, and words for the kind or model
-// of computer. A word someone might pick as a name stays out, since a chosen name can say who they are; the user's
-// own allowed_names takes in those.
+// Account and machine names too generic to flag.
 const GENERIC_NAMES = new Set(
   [
     "admin", "app", "dev", "ec2-user", "guest", "localhost", "node", "nobody", "root", "runner", "ubuntu", "user",
     "vagrant",
+  ].map(nameKey),
+);
+
+// Machine names a system or an installer sets, and words for the kind or model of computer. A word someone might pick
+// as a name stays out, since a chosen name can say who they are; the user's own allowed_names takes in those. These
+// never apply to the account name, which is often the person's own name, and some of these are given names.
+const DEFAULT_MACHINE_NAMES = new Set(
+  [
     "Mac", "MacBook", "MacBook-Air", "MacBook-Pro", "Mac-mini", "Mac-Pro", "Mac-Studio", "iMac", "iMac-Pro",
     "computer", "desktop", "laptop", "notebook", "workstation", "server",
     "raspberrypi", "penguin", "steamdeck", "debian", "fedora", "kali", "archiso", "manjaro", "pop-os", "nixos",
@@ -192,7 +198,9 @@ export function check(input: string, options: CheckOptions): Finding[] {
   // Only the user's own file can allow a name: naming it in a repository would post it.
   const allowedNames = new Set(rules.allowedNames.map(nameKey));
   for (const [category, name] of names) {
-    if (name.length < 3 || GENERIC_NAMES.has(nameKey(name)) || allowedNames.has(nameKey(name))) continue;
+    const key = nameKey(name);
+    if (name.length < 3 || GENERIC_NAMES.has(key) || allowedNames.has(key)) continue;
+    if (category === "machine name" && DEFAULT_MACHINE_NAMES.has(key)) continue;
     const re = termPattern(name);
     if (re) spans.push(...foldedSpans(folded, re, category));
   }
