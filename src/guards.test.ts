@@ -809,6 +809,74 @@ test("a blanket entry in the repository's allowlist fails the check", () => {
   assert.equal(checked.status, 2);
 });
 
+// Lines a repository's tests might hold on purpose: money, a home path, a temp folder and an email.
+const FIXTURE =
+  'const plan = "Upgrade to the paid plan for $20 a month";\nconst saved = "~/notes/today.md";\n' +
+  'const log = "/tmp/out.log";\nconst to = "someone@corp.co";\n';
+
+test("pre-push checks an exempt file's added lines for private terms only", () => {
+  const dir = installed();
+  bareRemote(dir);
+  mkdirSync(join(dir, "src"));
+  const exempt = { ".second-read.toml": 'exempt_files = ["src/**/*.test.ts"]\n' };
+  assert.equal(commit(dir, "Exempt the tests (#9)", exempt).status, 0);
+  // Adding an exemption is a change to the allowlist, so it waits for a review like any other.
+  assert.match(push(dir, "origin", "main").stderr, /this push changes the repository's allowlist/);
+  assert.equal(pushReviewed(dir, blob(dir, "HEAD:.second-read.toml"), "origin", "main").status, 0);
+
+  assert.equal(commit(dir, "Add tests (#9)", { "src/a.test.ts": FIXTURE }).status, 0);
+  const pushed = push(dir, "origin", "main");
+  assert.equal(pushed.status, 0, pushed.stderr);
+
+  assert.equal(commit(dir, "Add code (#9)", { "src/a.ts": FIXTURE }).status, 0);
+  const refused = push(dir, "origin", "main");
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /5 findings in the lines commit [0-9a-f]+ adds to src\/a\.ts\. /);
+  git(dir, "reset", "-q", "--hard", "HEAD~1");
+
+  // A private term is found even inside a path, where the full check reports only the path.
+  assert.equal(commit(dir, "Add more tests (#9)", { "src/b.test.ts": `const dir = "/tmp/${TERM}/x";\n` }).status, 0);
+  const term = push(dir, "origin", "main");
+  assert.equal(term.status, 1);
+  assert.match(term.stderr, /1 finding in the lines commit \w+ adds to src\/b\.test\.ts\. .*\n {2}1:19 +private term/);
+  git(dir, "reset", "-q", "--hard", "HEAD~1");
+
+  // Messages are checked in full, whatever files the commit touches.
+  writeFileSync(join(dir, "src", "c.test.ts"), FIXTURE);
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "--no-verify", "-m", "Test the paid plan page (#9)");
+  const message = push(dir, "origin", "main");
+  assert.equal(message.status, 1);
+  assert.match(message.stderr, /1 finding in the message of commit [0-9a-f]+\. .*\n {2}1:10 +money \(plan\)/);
+  git(dir, "reset", "-q", "--hard", "HEAD~1");
+
+  git(dir, "tag", "-a", "v1", "-m", "Paid plan tests");
+  assert.match(push(dir, "origin", "v1").stderr, /1 finding in the message of tag v1\./);
+});
+
+test("the check and the gh shim read an exempt file in full", () => {
+  const { cwd, gh, called } = shimSetup();
+  mkdirSync(join(cwd, "src"));
+  writeFileSync(join(cwd, ".second-read.toml"), 'exempt_files = ["src/**"]\n');
+  writeFileSync(join(cwd, "src", "body.md"), FIXTURE);
+  const checked = secondRead(cwd, ["check"], FIXTURE);
+  assert.equal(checked.status, 1);
+  assert.match(checked.stdout, /5 findings in this text/);
+  const refused = gh(["pr", "create", "--title", "Tests (#9)", "--body-file", "src/body.md"]);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /5 findings in the body of this pull request, from src\/body\.md/);
+  assert.ok(!called());
+});
+
+test("an exempt_files glob that takes in every file fails the check", () => {
+  const dir = installed();
+  writeFileSync(join(dir, ".second-read.toml"), 'exempt_files = ["**"]\n');
+  const refused = commit(dir, "Clean (#9)");
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /the check failed: .*exempt_files entry "\*\*" takes in every file/);
+  assert.equal(secondRead(dir, ["check"], "Clean\n").status, 2);
+});
+
 // The shim, in a folder ahead of a fake gh that notes its arguments and input and exits 3.
 function shimSetup() {
   const shimDir = fresh("shim");
