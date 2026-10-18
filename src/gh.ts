@@ -1,11 +1,11 @@
 import { accessSync, closeSync, constants, openSync, readSync, realpathSync, statSync } from "node:fs";
-import { delimiter, join, resolve } from "node:path";
+import { basename, delimiter, join, resolve } from "node:path";
 import { KIND_NAMES, type Kind } from "./checks.ts";
 import { shQuote } from "./git.ts";
 
 export const SHIM_MARKER = "# Added by second-read: the gh shim.";
 
-type Field = "title" | "body" | "bodyFile";
+type Field = "title" | "body" | "bodyFile" | "name";
 
 const TEXT_FLAGS: Record<string, Field> = {
   "--title": "title",
@@ -43,59 +43,100 @@ const DESCRIPTION_FLAGS: Record<string, Field> = { "--description": "body", "-d"
 interface Posting {
   kind: Kind;
   flags: Record<string, Field>;
-  // The other flags that take a value, so the value isn't read as an argument. Needed only with `args`.
-  valued?: string[];
+  // The command's other flags that take a value, as gh 2.92 has them. Every other flag is a switch, so in a group
+  // of short flags, as in "-dt Title", the flags before the first that takes a value are switches.
+  valued: string[];
   // Takes in the arguments after the command words, for a command that posts some of them.
   args?: (post: GhPost, args: string[]) => void;
   noun?: string;
   titleName?: string;
   bodyName?: string;
   fileName?: string;
+  nameName?: string;
 }
 
-const text = (kind: Kind): Posting => ({ kind, flags: TEXT_FLAGS });
-const comment: Posting = { kind: "comment", flags: COMMENT_FLAGS };
+const text = (kind: Kind, valued: string[] = []): Posting => ({ kind, flags: TEXT_FLAGS, valued });
+const comment = (valued: string[] = []): Posting => ({ kind: "comment", flags: COMMENT_FLAGS, valued });
+
+const ISSUE_CREATE = ["--assignee", "-a", "--label", "-l", "--milestone", "-m", "--project", "-p", "--recover",
+  "--template", "-T"];
+const ISSUE_EDIT = ["--add-assignee", "--add-label", "--add-project", "--milestone", "-m", "--remove-assignee",
+  "--remove-label", "--remove-project"];
+const PR_CREATE = [...ISSUE_CREATE, "--base", "-B", "--head", "-H", "--reviewer", "-r"];
+const PR_EDIT = [...ISSUE_EDIT, "--add-reviewer", "--base", "-B", "--remove-reviewer"];
 
 // A post's kind only picks how it's checked, and these check like a comment; each has its own noun.
-const release: Posting = {
+const release = (posting: Partial<Posting>): Posting => ({
   kind: "comment",
   flags: RELEASE_FLAGS,
+  valued: ["--discussion-category", "--target"],
   noun: "this release",
   bodyName: "notes",
-};
+  nameName: "tag",
+  ...posting,
+});
 
-const repository: Posting = {
+// gh release create [<tag>] [<asset>...]
+const releaseCreate = release({
+  valued: ["--discussion-category", "--notes-start-tag", "--target"],
+  args: (post, [tag]) => {
+    if (tag !== undefined) post.names.push(tag);
+  },
+});
+
+// A repository's name, from gh repo create [<name>] or gh repo rename [<new name>].
+const repository = (posting: Partial<Posting>): Posting => ({
   kind: "comment",
   flags: DESCRIPTION_FLAGS,
+  valued: [],
   noun: "this repository",
   bodyName: "description",
+  ...posting,
+});
+
+const repoName = (post: GhPost, [name]: string[]) => {
+  if (name !== undefined) post.names.push(name);
 };
+
+const repoCreate = repository({
+  valued: ["--gitignore", "-g", "--homepage", "-h", "--license", "-l", "--remote", "-r", "--source", "-s", "--team",
+    "-t", "--template", "-p"],
+  args: repoName,
+});
 
 // A gist's files are a new post of their own, not lines added to the repository's files, so exempt_files never
 // applies to them.
 const gist = (posting: Partial<Posting>): Posting => ({
   kind: "comment",
   flags: { "--desc": "body", "-d": "body" },
+  valued: [],
   noun: "this gist",
   bodyName: "description",
   fileName: "contents",
+  nameName: "file name",
   ...posting,
 });
 
-// Each argument is a file to upload, "-" being stdin. With none, it uploads stdin when it's piped in.
+// Each argument is a file to upload, "-" being stdin. With none, it uploads stdin when it's piped in. A file is
+// uploaded under its own name, and stdin under the name --filename gives.
 const gistCreate = gist({
-  valued: ["--filename", "-f"],
+  flags: { "--desc": "body", "-d": "body", "--filename": "name", "-f": "name" },
   args: (post, files) => {
-    if (files.length > 0) {
-      post.bodyFiles.push(...files);
-    } else {
-      post.bodyFiles.push("-");
+    const named = post.names.at(-1);
+    post.names = [];
+    if (files.length === 0) {
+      files = ["-"];
       post.stdinIfPiped = true;
+    }
+    post.bodyFiles.push(...files);
+    for (const file of files) {
+      if (file !== "-") post.names.push(basename(file));
+      else if (named !== undefined) post.names.push(named);
     }
   },
 });
 
-const label =(posting: Partial<Posting>): Posting => ({
+const label = (posting: Partial<Posting>): Posting => ({
   kind: "comment",
   flags: DESCRIPTION_FLAGS,
   valued: ["--color", "-c"],
@@ -107,24 +148,35 @@ const label =(posting: Partial<Posting>): Posting => ({
 
 const POSTS: Record<string, Record<string, Posting>> = {
   issue: {
-    create: text("issue"),
-    new: text("issue"),
-    edit: text("issue"),
+    create: text("issue", ISSUE_CREATE),
+    new: text("issue", ISSUE_CREATE),
+    edit: text("issue", ISSUE_EDIT),
     comment: text("comment"),
-    close: comment,
-    reopen: comment,
+    close: comment(["--duplicate-of", "--reason", "-r"]),
+    reopen: comment(),
   },
   pr: {
-    create: text("pr"),
-    new: text("pr"),
-    edit: text("pr"),
+    create: text("pr", PR_CREATE),
+    new: text("pr", PR_CREATE),
+    edit: text("pr", PR_EDIT),
     comment: text("comment"),
     review: text("review"),
-    close: comment,
-    reopen: comment,
-    merge: { kind: "commit", flags: MERGE_FLAGS, noun: "this merge commit", titleName: "subject" },
+    close: comment(),
+    reopen: comment(),
+    merge: {
+      kind: "commit",
+      flags: MERGE_FLAGS,
+      valued: ["--author-email", "-A", "--match-head-commit"],
+      noun: "this merge commit",
+      titleName: "subject",
+    },
   },
-  release: { create: release, new: release, edit: release },
+  release: {
+    create: releaseCreate,
+    new: releaseCreate,
+    // The tag it's given now is checked, not the one it had, so a release's tag can be renamed.
+    edit: release({ flags: { ...RELEASE_FLAGS, "--tag": "name" } }),
+  },
   gist: {
     create: gistCreate,
     new: gistCreate,
@@ -134,6 +186,8 @@ const POSTS: Record<string, Record<string, Posting>> = {
       flags: { "--desc": "body", "-d": "body", "--add": "bodyFile", "-a": "bodyFile" },
       valued: ["--filename", "-f", "--remove", "-r"],
       args: (post, [, file]) => {
+        const added = post.bodyFiles.at(-1);
+        if (added !== undefined) post.names.push(basename(added));
         if (file !== undefined) post.bodyFiles = [file];
       },
     }),
@@ -147,7 +201,15 @@ const POSTS: Record<string, Record<string, Posting>> = {
     // The name it's given now is checked, not the one it had, so a label can be renamed.
     edit: label({ flags: { ...DESCRIPTION_FLAGS, "--name": "title", "-n": "title" } }),
   },
-  repo: { create: repository, new: repository, edit: repository },
+  repo: {
+    create: repoCreate,
+    new: repoCreate,
+    edit: repository({
+      valued: ["--add-topic", "--default-branch", "--homepage", "-h", "--remove-topic",
+        "--squash-merge-commit-message", "--visibility"],
+    }),
+    rename: repository({ flags: {}, args: repoName }),
+  },
 };
 
 export interface GhPost {
@@ -157,9 +219,12 @@ export interface GhPost {
   titleName: string;
   bodyName: string;
   fileName: string;
+  nameName: string;
   title: string[];
   body: string[];
   bodyFiles: string[];
+  // Names the command gives, public once it runs: a repository's, a release's tag, a gist file's.
+  names: string[];
   // Stdin is read only when it's piped in, never from a terminal.
   stdinIfPiped?: boolean;
 }
@@ -182,10 +247,14 @@ export function parseGh(args: string[]): GhPost | undefined {
     titleName: posting.titleName ?? "title",
     bodyName: posting.bodyName ?? "body",
     fileName: posting.fileName ?? posting.bodyName ?? "body",
+    nameName: posting.nameName ?? "name",
     title: [],
     body: [],
     bodyFiles: [],
+    names: [],
   };
+  const takesValue = (flag: string) =>
+    flag in posting.flags || posting.valued.includes(flag) || flag === "-R" || flag === "--repo";
   // The arguments, the command words first.
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -194,10 +263,6 @@ export function parseGh(args: string[]): GhPost | undefined {
       positional.push(...args.slice(i + 1));
       break;
     }
-    if (arg === "-R" || arg === "--repo") {
-      i++;
-      continue;
-    }
     let name: string | undefined;
     let value: string | undefined;
     if (arg.startsWith("--")) {
@@ -205,25 +270,42 @@ export function parseGh(args: string[]): GhPost | undefined {
       name = eq < 0 ? arg : arg.slice(0, eq);
       if (eq >= 0) value = arg.slice(eq + 1);
     } else if (arg.startsWith("-") && arg.length > 1) {
-      // A short flag takes its value from the next argument, or joined: "-tTitle" or "-t=Title".
-      name = arg.slice(0, 2);
-      if (arg.length > 2) value = arg.slice(arg[2] === "=" ? 3 : 2);
+      const flag = shortFlag(arg, takesValue);
+      if (flag === undefined) continue;
+      ({ name, value } = flag);
     } else {
       positional.push(arg);
       continue;
     }
     const field = posting.flags[name];
     if (field === undefined) {
-      if (value === undefined && posting.valued?.includes(name)) i++;
+      if (value === undefined && takesValue(name)) i++;
       continue;
     }
     if (value === undefined) value = args[++i];
     if (value === undefined) continue;
     if (field === "bodyFile") post.bodyFiles.push(value);
+    else if (field === "name") post.names.push(value);
     else post[field].push(value);
   }
   posting.args?.(post, positional.slice(2));
   return post;
+}
+
+// A group of short flags, read as gh reads them: the first that takes a value takes the rest of the argument, past
+// an "=", or the next argument, which `value` is left undefined for. Those before it are switches, and a switch
+// given "=" takes the rest as its own. Undefined when the group is all switches.
+export function shortFlag(
+  arg: string,
+  takesValue: (flag: string) => boolean,
+): { name: string; value: string | undefined } | undefined {
+  let j = 1;
+  for (; j < arg.length && !takesValue(`-${arg[j]}`); j++) {
+    if (arg[j + 1] === "=" && j + 2 < arg.length) return undefined;
+  }
+  if (j === arg.length) return undefined;
+  if (j + 1 === arg.length) return { name: `-${arg[j]}`, value: undefined };
+  return { name: `-${arg[j]}`, value: arg.slice(arg[j + 1] === "=" && j + 2 < arg.length ? j + 2 : j + 1) };
 }
 
 // Each text a posting gh command sends, with where it goes. `read` gives a body file's text, "-" being stdin.
@@ -237,6 +319,11 @@ export function postTexts(post: GhPost, read: (file: string) => string): [string
       read(f),
     ]),
   ];
+}
+
+// Each name a posting gh command gives, with where it goes. A name is checked as a branch name is.
+export function postNames(post: GhPost): [string, string][] {
+  return post.names.map((n) => [`the ${post.nameName} of ${post.noun}`, n]);
 }
 
 export function shimScript(command: string[]): string {

@@ -106,6 +106,32 @@ test("the hook checks gh release, gist, label and repo posts", () => {
   assert.match(hook(bash(`cat notes.md | gh gist create`)).reason, /can't check what this command posts/);
 });
 
+test("the hook reads grouped short flags as gh does", () => {
+  assert.match(hook(bash(`gh pr create -dt "${LEAKY}"`)).reason, /title of this pull request/);
+  assert.match(hook(bash(`gh label create bug -fd "${LEAKY}"`)).reason, /description of this label/);
+  assert.equal(hook(bash(`gh pr create -dt "Move the cache" -b "${CLEAN}"`)).denied, false);
+  // Regression: gh api read -if as the switch -i alone, so the field went unchecked.
+  assert.match(hook(bash(`gh api repos/example/repo/issues -if body="${LEAKY}"`)).reason, /body field of gh api/);
+  assert.match(hook(bash(`gh api repos/example/repo/issues -iXPOST -f body="${LEAKY}"`)).reason, /body field/);
+  assert.equal(hook(bash(`gh api repos/example/repo/issues -if body="${CLEAN}"`)).denied, false);
+});
+
+test("the hook checks the names a post gives as branch names are read, and lets a leaked name be renamed", () => {
+  assert.match(hook(bash(`gh repo create example/${TERM} --public`)).reason, /name of this repository/);
+  assert.match(hook(bash(`gh repo create -h https://example.com example/paid-plan`)).reason, /money \(plan\)/);
+  assert.match(hook(bash(`gh repo rename -R example/repo ${TERM}`)).reason, /name of this repository/);
+  assert.match(hook(bash(`gh release create ${TERM}-v1 -t "Version 1"`)).reason, /tag of this release/);
+  assert.match(hook(bash(`gh release edit v1 --tag paid-plan-v1`)).reason, /tag of this release/);
+  assert.match(hook(bash(`echo "${CLEAN}" | gh gist create -f ${TERM}.md`)).reason, /file name of this gist/);
+  mkdirSync(join(repo, TERM), { recursive: true });
+  writeFileSync(join(repo, TERM, "notes.md"), `${CLEAN}\n`);
+  writeFileSync(join(repo, `${TERM}.md`), `${CLEAN}\n`);
+  assert.equal(hook(bash(`gh gist create ${TERM}/notes.md`)).denied, false);
+  assert.match(hook(bash(`gh gist edit abc123 --add ${TERM}.md`)).reason, /file name of this gist/);
+  assert.equal(hook(bash(`gh release edit ${TERM}-v1 --tag v1`)).denied, false);
+  assert.equal(hook(bash(`gh repo rename -R example/${TERM} clean`)).denied, false);
+});
+
 test("the hook checks the files a gist uploads in full, even exempt ones", () => {
   const fixture = 'const saved = "~/notes/today.md";\n';
   writeFileSync(join(repo, "src", "cache.test.ts"), fixture);

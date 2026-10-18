@@ -1077,6 +1077,17 @@ test("the gh shim refuses a post with a finding, and never runs gh", () => {
     ["label", "edit", "bug", `-dPort ${TERM}`],
     ["repo", "create", "example/repo", "--private", "-d", `Port ${TERM}`],
     ["repo", "edit", `--description=Port ${TERM}`],
+    // Grouped short flags: the switches, then the flag that takes the next argument.
+    ["pr", "create", "-dt", `Port ${TERM}`],
+    ["pr", "create", "-fb", `Port ${TERM}`],
+    ["label", "create", "bug", "-fd", `Port ${TERM}`],
+    // The names a command gives, past the flags that take a value.
+    ["repo", "create", `example/${TERM}`, "--public"],
+    ["repo", "new", "-h", "https://example.com", "-p", "example/template", TERM],
+    ["repo", "rename", "-R", "example/repo", "-y", TERM],
+    ["release", "create", "--target", "main", `${TERM}-v1`],
+    ["release", "edit", "v1", "--tag", `${TERM}-v1`],
+    ["gist", "create", "-f", `${TERM}.md`],
   ];
   for (const args of cases) {
     const result = gh(args);
@@ -1128,6 +1139,32 @@ test("the gh shim checks release notes files and the files a gist uploads", () =
   assert.ok(!called());
   assert.equal(gh(["gist", "create", "clean.md", "-d", "Clean"]).status, 3);
   assert.equal(gh(["label", "create", "bug", "-d", "Something is broken"]).status, 3);
+});
+
+test("the gh shim checks the names a post gives as branch names are read, and lets a leaked name be renamed", () => {
+  const { gh, cwd } = shimSetup();
+  const money: [string[], string][] = [
+    [["repo", "create", "example/paid-plan"], "the name of this repository"],
+    [["release", "create", "paid-plan-v1"], "the tag of this release"],
+    [["gist", "create", "-f", "paid_plan.md"], "the file name of this gist"],
+  ];
+  for (const [args, where] of money) {
+    const refused = gh(args);
+    assert.equal(refused.status, 1, args.join(" "));
+    assert.match(refused.stderr, new RegExp(`1 finding in ${where}\\. .*\\n {2}1:\\d+ +money \\(plan\\)`), args.join(" "));
+  }
+  // A gist file is uploaded under its own name, not its path.
+  mkdirSync(join(cwd, TERM));
+  writeFileSync(join(cwd, TERM, "notes.md"), "Clean\n");
+  writeFileSync(join(cwd, `${TERM}.md`), "Clean\n");
+  assert.equal(gh(["gist", "create", `${TERM}/notes.md`]).status, 3);
+  const named = gh(["gist", "create", `${TERM}.md`]);
+  assert.equal(named.status, 1);
+  assert.match(named.stderr, /in the file name of this gist\./);
+  assert.equal(gh(["gist", "edit", "abc123", "--add", `${TERM}.md`]).status, 1);
+  // The name it had isn't checked.
+  assert.equal(gh(["release", "edit", `${TERM}-v1`, "--tag", "v1"]).status, 3);
+  assert.equal(gh(["repo", "rename", "-R", `example/${TERM}`, "clean"]).status, 3);
 });
 
 test("the gh shim runs the real gh with the same arguments and input, and returns its exit code", () => {

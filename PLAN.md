@@ -68,6 +68,10 @@ So the check has to run **before** a post goes out, and it can't rely on the per
   It checks the `--comment` of `issue|pr close|reopen` and the merge commit message of `pr merge` too, and for
   `release`, `gist`, `label` and `repo` `create|edit`, the title, notes, description, label name and gist files.
   A gist's files are checked in full, since a gist is a new post, not lines added to the repository's files.
+  The names these give are checked as branch names are: a repository's on `create` and `rename`, a release's tag,
+  and each gist file's name (its basename, or `--filename` for stdin). An edit checks only the new name, so a
+  leaked one can be renamed away. Grouped short flags are read as gh reads them, from each command's flags that
+  take a value.
   Every other command passes straight through.
 
 These catch every agent that posts through `git` and `gh`, and the user too.
