@@ -11,8 +11,8 @@ revisions, and a commit is public until the history is rewritten.
 second-read reads what's about to go out and stops it when it finds something private. It doesn't rewrite your text.
 It refuses, names what it found, and leaves the fix to you or your agent.
 
-> **Status:** early. The check, the git and `gh` guards and the Claude Code plugin run; the model check, other agent
-> adapters and the sweep are planned.
+> **Status:** early. The check, the git and `gh` guards and the Claude Code plugin with its model check run; other
+> agent adapters and the sweep are planned.
 > [PLAN.md](./PLAN.md) is the design.
 
 ## What it checks
@@ -42,7 +42,9 @@ It isn't a secrets scanner. Tools like gitleaks find keys and tokens, and second
   Claude Code comes first. Other agents follow, each written from its tool's own hook docs.
 - **A sweep** of what's already posted to a repository, edit histories included.
 
-The check runs on your machine, and the text it reads goes nowhere else.
+The check, the git hooks and the `gh` shim run on your machine, and the text they read goes nowhere else. Only the
+Claude Code plugin's model check sends text: the post and your turns in the conversation, to the model provider your
+session already uses. You can turn it off.
 
 ## Install
 
@@ -188,6 +190,26 @@ only when the command runs, such as `--body "$BODY"` or what `xargs` adds, can't
 denied. So is a release asset given as a glob, such as `dist/*.tgz`, whose files may not be there yet. Put the text
 in the command, or in a file and pass its path, and name each asset.
 
+### The model check
+
+A post the word check passes then goes to a small model, which reads it beside what you typed in the conversation.
+It refuses a post that carries what you told the agent in private, quoted or in other words: why you personally
+decided something, rather than what changed, or a description of your machine, home, accounts or private projects.
+A reason about the work, such as a bug, a release or a code style you prefer, is fine.
+
+- **When it runs:** only on a call that posts, after the word check passes it, so other calls never wait on it. It
+  adds a few seconds to each post.
+- **What it sends:** your typed turns, newest first, up to 60,000 characters, and the post's text apart from file
+  contents. It runs `claude -p` with no tools, so they go only to the model provider your session already uses, and
+  each check counts toward your usage limit or API billing.
+- **When it fails:** a timeout (90 seconds), a crash, or an answer it can't read refuses the post, and the reason
+  says why. A crash within a few seconds, such as an overloaded API, is tried once more first.
+- **What it misses:** a reason you gave earlier than the 60,000 characters, or before a compaction or `/clear`. A
+  paraphrase the model doesn't spot. Text you pasted from elsewhere can try to steer it.
+
+To turn it off, or pick another model than `haiku`, open `/config` and change second-read's **Model check** or
+**Model check's model**. The word check keeps running either way.
+
 The plugin never approves a call. A clean post goes on to Claude Code's usual permission check. Its deny holds in
 `bypassPermissions` mode too: a session run with `--permission-mode bypassPermissions` on Claude Code 2.1.302 had
 its leaking post refused.
@@ -208,6 +230,9 @@ If the hook itself fails or times out, the call is denied. A hook that can't run
    ```sh
    claude plugin enable second-read@second-read
    ```
+
+If `claude` isn't on the hook's `PATH`, or can't reach the model, the model check refuses every post, but no other
+call. Turn the model check off in `/config` until it can.
 
 Before Claude Code 2.1.295, the hook's `onFailure` setting is ignored, so a hook that crashes lets the call through.
 

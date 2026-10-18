@@ -8,5 +8,19 @@
   "homepage": "https://github.com/deanbot/second-read#readme",
   "repository": "https://github.com/deanbot/second-read",
   "license": "MIT",
-  "hooks": "./adapters/claude-code/hooks.json"
+  "hooks": "./adapters/claude-code/hooks.json",
+  "userConfig": {
+    "model_check": {
+      "type": "boolean",
+      "title": "Model check",
+      "description": "After the word check passes a post, a small model reads it beside your turns in the conversation and refuses it if it carries what you said in private. It sends both to the model provider this session uses, and counts toward your usage limit or API billing.",
+      "default": true
+    },
+    "model": {
+      "type": "string",
+      "title": "Model check's model",
+      "description": "The model the model check runs, as claude --model takes it.",
+      "default": "haiku"
+    }
+  }
 }

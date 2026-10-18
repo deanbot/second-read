@@ -8,7 +8,7 @@
             "type": "command",
             "command": "node",
             "args": ["${CLAUDE_PLUGIN_ROOT}/src/cli.ts", "claude-hook"],
-            "timeout": 30,
+            "timeout": 120,
             "onFailure": "block"
           }
         ]

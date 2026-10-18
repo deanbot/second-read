@@ -22,6 +22,7 @@ import {
   USER_FILE_TEMPLATE,
 } from "./config.ts";
 import { bashPosts, firstUnknown, isGithubTool, mcpPosts, type Post } from "./claude.ts";
+import { JUDGING, judgeRefusal, modelCheck } from "./judge.ts";
 import { findRealGh, globNames, isShim, parseGh, postNames, postTexts, shimScript } from "./gh.ts";
 import {
   type AllowlistChange,
@@ -438,7 +439,8 @@ async function runShim(io: Io, args: string[]): Promise<number> {
 }
 
 // What the Claude Code plugin's PreToolUse hook runs, with the tool call as JSON on stdin. A post with findings, or
-// one that can't be checked, is denied, and the reason goes to Claude. Otherwise it prints nothing and the call
+// one that can't be checked, is denied, and the reason goes to Claude. A post the word check passes then goes to
+// the model check, unless the user turned it off. Otherwise it prints nothing and the call
 // goes on as it would have: allowing it would skip the user's own permission prompt.
 async function runClaudeHook(io: Io): Promise<number> {
   let reason: string | undefined;
@@ -487,7 +489,12 @@ function claudeRefusal(io: Io, call: unknown): string | undefined {
       return { where: post.where, findings: exempt ? checkTerms(post.text, options) : check(post.text, options) };
     })
     .filter((s) => s.findings.length > 0);
-  return sections.length > 0 ? report(sections, FIX_TEXT) : undefined;
+  if (sections.length > 0) return report(sections, FIX_TEXT);
+  // A file's contents are code, which the word check covers. Everything else is prose the model reads.
+  const prose = posts.filter((p) => p.file === undefined).map(({ where, text }) => ({ where, text }));
+  const { on, model } = modelCheck(io.env);
+  if (!on || prose.length === 0 || io.env[JUDGING]) return undefined;
+  return judgeRefusal(prose, (call as Record<string, unknown>).transcript_path, { env: io.env, model });
 }
 
 function runInit(io: Io): number {
