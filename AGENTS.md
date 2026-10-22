@@ -32,7 +32,7 @@ out. [PLAN.md](./PLAN.md) is the design source of truth. Read the section an iss
   stays out of CI.
 - The check to require before merge is `tests`. It passes when the tests passed on both Node versions, or when they
   were skipped for a Markdown-only change.
-- To switch CI off, set the repository variable `CI_ENABLED` to `false` (Settings → Secrets and variables →
+- To switch CI off, set the repository variable `CI_ENABLED` to `false`, in any case (Settings → Secrets and variables →
   Actions → Variables). To switch it back on, delete the variable or set it to anything else; unset means on.
 - While it's off, no tests run and the `tests` check fails, so nothing merges untested. A skipped job would count
   as passing, which is why it fails instead. To merge then, either switch CI back on and push a new commit (or close

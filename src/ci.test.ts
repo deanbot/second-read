@@ -88,7 +88,7 @@ test("renaming or deleting code counts as a code change", () => {
 });
 
 test("only a lowercase .md ending counts as Markdown", () => {
-  for (const name of ["NOTES.MD","notes.md.ts", "docs.md/index.ts", "notes.markdown", ".md-config"]) {
+  for (const name of ["NOTES.MD", "notes.md.ts", "docs.md/index.ts", "notes.markdown", ".md-config"]) {
     const { dir, base } = repo();
     write(dir, name);
     assert.equal(changed(dir, base, commit(dir)), "tests=true\n", name);

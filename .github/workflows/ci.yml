@@ -52,19 +52,20 @@ jobs:
       - run: npm ci
       - run: npm test
 
-  # A skipped job counts as passing for a required check, so this job runs even when CI is switched off, and fails.
+  # A skipped job counts as passing for a required check, so this job always runs, and fails unless the tests passed
+  # or were skipped for a Markdown-only change: when CI is switched off, a job failed, or the run was cancelled.
   tests:
     needs: [changes, test]
-    if: ${{ !cancelled() }}
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - env:
-          CI_ENABLED: ${{ vars.CI_ENABLED }}
+          OFF: ${{ vars.CI_ENABLED == 'false' }}
           CHANGES: ${{ needs.changes.result }}
           TESTS: ${{ needs.changes.outputs.tests }}
           TEST: ${{ needs.test.result }}
         run: |
-          if [ "$CI_ENABLED" = false ]; then
+          if [ "$OFF" = true ]; then
             echo "::error::CI is switched off: the repository variable CI_ENABLED is false. AGENTS.md says what to do."
             exit 1
           fi
