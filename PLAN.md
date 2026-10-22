@@ -97,7 +97,9 @@ So the check has to run **before** a post goes out, and it can't rely on the per
   terms: the guards run there too, and would otherwise check its pushes by patterns only. It's a variable, so the
   session's commands see it, but it names a folder, not the terms, which an empty `SECOND_READ_CONFIG_DIR` only keeps
   out of what second-read prints. A repository's settings can set it, so it has `SECOND_READ_CONFIG_DIR`'s rules
-  (section 3), and a missing `config.toml` refuses even in the account's default folder. While it's set, a guard's
+  (section 3), and a missing `config.toml` refuses even in the account's default folder. Set but blank refuses too:
+  settings can set a variable but not unset it, so a repository's blank value would otherwise turn off the user's,
+  and the user sets the pair in local settings, which sit above the project's shared ones. While it's set, a guard's
   output goes into the session, so it names no private term: a term's finding gives its line, column and rule, and a
   term anywhere else, an error included, is masked, as in the plugin's deny reasons (section 5). Unset, a guard
   prints what it found, for the person at the terminal.

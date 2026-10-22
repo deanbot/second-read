@@ -88,8 +88,8 @@ with its words joined by spaces, hyphens or nothing. It doesn't catch misspellin
 `SECOND_READ_CONFIG_DIR` names another config folder, for tests, or for an agent session whose own output should
 never show your terms. The guards and the plugin can each be given your real one: see
 [the guards' own folder](#a-config-folder-of-the-guards-own) and
-[the plugin's](#a-config-folder-of-the-plugins-own). Agent tools can set variables from settings checked into a repository: Claude Code's
-project `.claude/settings.json` applies to "everyone working in the project, checked into source control", its
+[the plugin's](#a-config-folder-of-the-plugins-own). Agent tools can set variables from settings checked into a
+repository: Claude Code's project `.claude/settings.json` applies to "everyone working in the project, checked into source control", its
 `env` key can be set in any settings file, and only a few named variables are kept from project settings. So a
 repository could point the variable at a config of its own choosing. The same goes for the variables that choose
 the platform's folder: `XDG_CONFIG_HOME`, `APPDATA`, and `HOME` or `USERPROFILE`. Whichever of them chose the
@@ -209,11 +209,16 @@ settings:
   has to hold a `config.toml`, the path has to be absolute or start with `~`, and it can't be inside a git
   repository, unless it's your account's own default folder. If any is wrong, every guard refuses until it's fixed;
   a `gh` command that posts nothing still runs.
+- **Set but blank refuses too.** A repository's settings can set a variable but not unset it, so a blank value
+  there would otherwise turn yours off, and the guards would fall back to the folder with no terms.
+- **Where to set the pair:** in `.claude/settings.local.json` or with `--settings`, never in settings checked into
+  a repository. A project's shared `.claude/settings.json` overrides the same variable in your
+  user settings; the local file and `--settings` sit above it.
 - **What it doesn't hide:** the session's commands can see the variable, as they see every other. It names a folder,
   not your terms, and your default folder is as easy to find. An empty `SECOND_READ_CONFIG_DIR` keeps your terms out
   of what second-read prints into the session; it never kept the file from being read.
 
-Unset or blank, the guards find your config as everything else does.
+Unset, the guards find your config as everything else does.
 
 ## The Claude Code plugin
 
