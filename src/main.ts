@@ -14,9 +14,11 @@ import {
 } from "./checks.ts";
 import {
   CONFIG_DIR_VARIABLE,
-  configDir,
+  type ConfigFolder,
+  configFolder,
   exemptMatcher,
   insideRepository,
+  isAccountConfigDir,
   findRepoConfig,
   loadRepoConfig,
   loadUserConfig,
@@ -57,6 +59,8 @@ export interface Io {
   platform: NodeJS.Platform;
   cwd: string;
   identity: () => Identity;
+  // The home folder the OS account names, which no environment variable changes, if there is one.
+  accountHome: () => string | undefined;
   // How to run this CLI again (the node binary and the script), for the hooks and the shim to call.
   command: string[];
   readStdin: () => Promise<Buffer>;
@@ -155,7 +159,7 @@ function loadRules(
         `clear the option in /config or /plugin, so the check can read your private terms`,
     );
   }
-  const user = loadUserConfig(userFile ?? defaultUserFile(io, cwd));
+  const user = loadUserConfig(userFile ?? defaultUserFile(io));
   const repoPath = findRepoConfig(cwd);
   const repo = repoPath === undefined ? undefined : loadRepoConfig(repoPath, user.terms);
   return { identity, rules: mergeRules(user, repo), exemptFiles: repo?.exemptFiles ?? [] };
@@ -397,7 +401,7 @@ function runShimSetup(io: Io, args: string[]): number {
     throw new UsageError(`shim takes "install" or "uninstall", and optionally a folder`);
   }
   if (io.platform === "win32") throw new Error("the gh shim is a shell script, and Windows isn't supported yet");
-  const dir = folder === undefined ? join(ownConfigDir(io), "bin") : resolve(io.cwd, folder);
+  const dir = folder === undefined ? join(ownConfigDir(io).dir, "bin") : resolve(io.cwd, folder);
   const path = join(dir, "gh");
   const theirs = existsSync(path) && !isShim(path);
   if (action === "uninstall") {
@@ -492,34 +496,42 @@ async function runClaudeHook(io: Io): Promise<number> {
 }
 
 // Your config file, unless the plugin's config_dir option names one.
-function defaultUserFile(io: Io, cwd = io.cwd): string {
-  const dir = ownConfigDir(io, cwd);
-  const path = join(dir, USER_FILE);
+function defaultUserFile(io: Io): string {
+  const folder = ownConfigDir(io);
+  const path = join(folder.dir, USER_FILE);
   // A missing file is the same as no terms, so a folder that has none, such as / or /var/empty, would switch
-  // the term check off wherever the variable is set, a repository's own settings included. A folder that's meant
-  // to be empty holds a config.toml with no terms in it.
-  if (io.env[CONFIG_DIR_VARIABLE] && !existsSync(path)) {
+  // the term check off wherever the variable that chose it is set, a repository's own settings included. Only the
+  // account's own default folder may go without one; a folder that's meant to be empty holds a config.toml with no
+  // terms in it.
+  if (!folder.own && !existsSync(path)) {
     throw new Error(
-      `${CONFIG_DIR_VARIABLE} is ${dir}, which has no ${USER_FILE}, so the check can't tell whether you have ` +
-        `private terms. If it's meant to have none, write one with no terms: ` +
-        `${CONFIG_DIR_VARIABLE}=${shellQuote(dir)} second-read init`,
+      `${folderName(folder)}, which has no ${USER_FILE}, so the check can't tell whether you have private terms. ` +
+        `If it's meant to have none, write one with no terms: ${folder.variable}=${shellQuote(folder.value)} ` +
+        `second-read init`,
     );
   }
   return path;
 }
 
-// Your config folder. One that SECOND_READ_CONFIG_DIR names inside the repository at `cwd` is refused, since that
-// repository's own settings could have named it, and a config there says whatever the repository wants.
-function ownConfigDir(io: Io, cwd = io.cwd): string {
-  const dir = configDir(io.env, io.platform, io.identity().home);
-  const top = io.env[CONFIG_DIR_VARIABLE] ? insideRepository(dir, cwd) : undefined;
+// Your config folder. A repository's own settings can set every variable that chooses it, so one in any git
+// repository is refused, wherever the check runs from: a config there says whatever that repository wants. The
+// account's own default folder is the exception, since no repository's settings can choose it.
+function ownConfigDir(io: Io): ConfigFolder & { own: boolean } {
+  const folder = configFolder(io.env, io.platform, io.identity().home);
+  const own = isAccountConfigDir(folder.dir, io.platform, io.accountHome());
+  const top = own ? undefined : insideRepository(folder.dir);
   if (top !== undefined) {
     throw new Error(
-      `${CONFIG_DIR_VARIABLE} is ${dir}, inside the repository at ${top}. A repository's own settings can set ` +
-        `it, so it can't name a folder there; set it to one outside the repository, or unset it`,
+      `${folderName(folder)}, inside the repository at ${top}. A repository's own settings can set ` +
+        `${folder.variable}, so it can't name a folder in a repository; point it outside every repository, or unset it`,
     );
   }
-  return dir;
+  return { ...folder, own };
+}
+
+function folderName({ dir, variable, value }: ConfigFolder): string {
+  if (variable === CONFIG_DIR_VARIABLE) return `${variable} is ${dir}`;
+  return `${variable} is ${value}, so your config folder is ${dir}`;
 }
 
 function shellQuote(text: string): string {
@@ -584,7 +596,7 @@ function claudeRefusal(io: Io, call: unknown, userFile: string | Error | undefin
 }
 
 function runInit(io: Io): number {
-  const dir = ownConfigDir(io);
+  const { dir } = ownConfigDir(io);
   const path = join(dir, USER_FILE);
   if (existsSync(path)) {
     io.out(`second-read: ${path} already exists; it was left as it is.\n`);

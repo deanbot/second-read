@@ -89,25 +89,33 @@ with its words joined by spaces, hyphens or nothing. It doesn't catch misspellin
 never show your terms. Agent tools can set variables from settings checked into a repository: Claude Code's
 project `.claude/settings.json` applies to "everyone working in the project, checked into source control", its
 `env` key can be set in any settings file, and only a few named variables are kept from project settings. So a
-repository could point the variable at a config of its own choosing, and the check refuses the forms that would
-let it:
+repository could point the variable at a config of its own choosing. The same goes for the variables that choose
+the platform's folder: `XDG_CONFIG_HOME`, `APPDATA`, and `HOME` or `USERPROFILE`. Whichever of them chose the
+folder, the check refuses the forms that would let a repository pick it:
 
-- **A folder inside the repository being checked**, its work tree or `.git`, through symlinks too. Set it to a
-  folder outside the repository, or unset it.
+- **A folder inside any git repository**, its work tree or `.git`, through symlinks too, wherever the check runs
+  from. Point the variable at a folder outside every repository, or unset it.
 - **A relative path**, which would be read from wherever the check runs. A leading `~` is your home folder, since
   settings files hand the value over with no shell to expand it.
 - **A folder with no `config.toml`.** A missing file would mean no terms, so a folder every machine has, such as
   `/`, `/var/empty` or the system's temp folder, would switch the term check off. A folder that's meant to have no
-  terms holds a file without any, which `init` writes:
+  terms holds a file without any, which `init` writes, with the variable set as the check sees it:
 
   ```sh
   SECOND_READ_CONFIG_DIR=/path/to/folder second-read init
   ```
 
-Each makes the check fail, so the guards refuse until it's fixed. The platform's own config folder is never
-refused: a missing file there still means no terms yet.
+Each makes the check fail, so the guards refuse until it's fixed. Your account's own default folder is the one
+exception: `~/.config/second-read` (`AppData\Roaming\second-read` on Windows), with `~` the home folder your
+account has on the system rather than `HOME`, which no repository's settings can change. It's read even when your
+home folder is itself a git repository, and a missing file there still means no terms yet.
 
-**Upgrading:** if you point `SECOND_READ_CONFIG_DIR` at an empty folder, run that `init` once, or every check fails.
+**Upgrading:** run `init` once, with the same variables set, or every check fails, if your config folder has no
+`config.toml` and any of these is true:
+
+- `SECOND_READ_CONFIG_DIR` names it;
+- `XDG_CONFIG_HOME` or `APPDATA` points somewhere other than your account's default;
+- `HOME` isn't your account's home folder, as under `sudo` without `-H` or in some CI containers.
 
 The machine name isn't flagged when it's one a system gives by default, such as `MacBook-Pro`, `raspberrypi` or
 `penguin`, or a word for the kind of computer, such as `laptop`. Any other name is, even an ordinary word, since a

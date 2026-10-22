@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { isBlanketEmail, isBlanketPath, type Rules } from "./checks.ts";
 import { escapeRegExp, fold, termPattern } from "./normalize.ts";
 import { parseToml, type TomlValue } from "./toml.ts";
@@ -28,38 +28,63 @@ const ALLOW_KEYS = { allowed_words: "allowedWords", allowed_emails: "allowedEmai
 
 export const CONFIG_DIR_VARIABLE = "SECOND_READ_CONFIG_DIR";
 
-// The platform's config folder. SECOND_READ_CONFIG_DIR overrides it, which is how tests keep away from the real one,
-// and how an agent session keeps its own output free of the user's terms. Settings files hand variables over as
-// written, with no shell, so a leading ~ is expanded here; a relative path is refused, since it would be read from
-// wherever the check runs, usually inside the repository being checked.
-export function configDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, home: string): string {
+export interface ConfigFolder {
+  dir: string;
+  // The variable that chose the folder, and its value with ~ expanded, for a message that names them.
+  variable: string;
+  value: string;
+}
+
+// The config folder: SECOND_READ_CONFIG_DIR, or the platform's, from APPDATA or XDG_CONFIG_HOME, or else the home
+// folder. SECOND_READ_CONFIG_DIR is how tests keep away from the real one, and how an agent session keeps its own
+// output free of the user's terms. A repository's own settings can set any of these, so each gets the same rules.
+// Settings files hand variables over as written, with no shell, so a leading ~ is expanded here; a relative path is
+// refused, since it would be read from wherever the check runs, usually inside the repository being checked.
+export function configFolder(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, home: string): ConfigFolder {
   const set = env[CONFIG_DIR_VARIABLE];
-  if (set) return absoluteDir(set, home, CONFIG_DIR_VARIABLE);
-  if (platform === "win32") return join(env.APPDATA || join(home, "AppData", "Roaming"), "second-read");
-  return join(env.XDG_CONFIG_HOME || join(home, ".config"), "second-read");
+  if (set) {
+    const dir = absoluteDir(set, home, CONFIG_DIR_VARIABLE);
+    return { dir, variable: CONFIG_DIR_VARIABLE, value: dir };
+  }
+  const base = platform === "win32" ? "APPDATA" : "XDG_CONFIG_HOME";
+  const baseValue = env[base];
+  if (baseValue) {
+    const value = absoluteDir(baseValue, home, base);
+    return { dir: join(value, "second-read"), variable: base, value };
+  }
+  const variable = platform === "win32" ? "USERPROFILE" : "HOME";
+  if (!isAbsolute(home)) throw new ConfigError(`${variable} is ${JSON.stringify(home)}, which isn't an absolute path`);
+  return { dir: defaultConfigDir(platform, home), variable, value: home };
+}
+
+function defaultConfigDir(platform: NodeJS.Platform, home: string): string {
+  return platform === "win32" ? join(home, "AppData", "Roaming", "second-read") : join(home, ".config", "second-read");
+}
+
+// Whether `dir` is the account's own default config folder, built from the home folder the OS account names rather
+// than HOME, so no repository's settings can choose it. With no account home known, no folder is.
+export function isAccountConfigDir(dir: string, platform: NodeJS.Platform, accountHome: string | undefined): boolean {
+  if (accountHome === undefined || !isAbsolute(accountHome)) return false;
+  return realPath(dir) === realPath(defaultConfigDir(platform, accountHome));
 }
 
 function absoluteDir(value: string, home: string, name: string): string {
-  const dir = value.replace(/^~(?=[/\\]|$)/, home);
-  if (!isAbsolute(dir)) throw new ConfigError(`${name} is ${JSON.stringify(value)}, which isn't an absolute path`);
+  const tilde = /^~(?=[/\\]|$)/.test(value);
+  const dir = tilde ? home + value.slice(1) : value;
+  if (!isAbsolute(dir) || (tilde && !isAbsolute(home))) {
+    throw new ConfigError(`${name} is ${JSON.stringify(value)}, which isn't an absolute path`);
+  }
   return dir;
 }
 
-// The top of the repository `dir` is in, when it's in the git repository at or above `cwd`: its work tree, `.git`
-// included. Both are read through symlinks, so a link into the repository counts as inside it. A repository's own
-// settings can set SECOND_READ_CONFIG_DIR, and a folder of its own would hold whatever config it likes, such as one
-// with no terms.
-export function insideRepository(dir: string, cwd: string): string | undefined {
-  const top = repositoryTop(cwd);
-  if (top === undefined) return undefined;
-  const path = relative(realPath(top), realPath(dir));
-  return path === "" || !(path === ".." || path.startsWith(`..${sep}`) || isAbsolute(path)) ? top : undefined;
-}
-
-function repositoryTop(cwd: string): string | undefined {
-  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
-    if (existsSync(join(dir, ".git"))) return dir;
-    if (dirname(dir) === dir) return undefined;
+// The top of the git repository `dir` is in, any repository, wherever the check runs from: its work tree, `.git`
+// included. The folder is read through symlinks, so a link into a repository counts as inside it. A repository's own
+// settings can set the variables that choose the config folder, and a folder in a repository would hold whatever
+// config it likes, such as one with no terms.
+export function insideRepository(dir: string): string | undefined {
+  for (let path = realPath(dir); ; path = dirname(path)) {
+    if (existsSync(join(path, ".git"))) return path;
+    if (dirname(path) === path) return undefined;
   }
 }
 

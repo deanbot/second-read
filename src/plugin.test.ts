@@ -387,12 +387,18 @@ test("a term is masked before a value is quoted, so an escaped newline or backsl
   fake.mode("clean");
 });
 
-test("the hook refuses a SECOND_READ_CONFIG_DIR inside the repository a post goes to, and no other call", () => {
+test("the hook refuses a SECOND_READ_CONFIG_DIR inside a repository, wherever a post goes, and no other call", () => {
   fake.mode("clean");
   mkdirSync(join(repo, "config-folder"), { recursive: true });
   writeFileSync(join(repo, "config-folder", "config.toml"), "terms = []\n");
   const inRepo = { SECOND_READ_CONFIG_DIR: join(repo, "config-folder") };
   assert.match(hook(prBody(LEAKY), undefined, inRepo).reason, /SECOND_READ_CONFIG_DIR is .*config-folder, inside the repository/);
+  // A post that goes to a folder in no repository, or in another, is refused just the same.
+  for (const cwd of [home, join(scratch, "other-repo")]) {
+    if (cwd !== home) assert.equal(spawnSync("git", ["init", "-q", cwd], { env }).status, 0);
+    const reason = hook({ ...prBody(LEAKY), cwd }, undefined, inRepo).reason;
+    assert.match(reason, /SECOND_READ_CONFIG_DIR is .*config-folder, inside the repository/, cwd);
+  }
   assert.equal(hook(bash(`ls -la`), undefined, inRepo).denied, false);
   // config_dir, which no repository can set, takes the hook past it.
   assert.equal(hook(prBody(LEAKY), undefined, { ...inRepo, CLAUDE_PLUGIN_OPTION_CONFIG_DIR: own }).denied, true);
