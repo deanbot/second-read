@@ -86,8 +86,10 @@ with its words joined by spaces, hyphens or nothing. It doesn't catch misspellin
 ### `SECOND_READ_CONFIG_DIR`
 
 `SECOND_READ_CONFIG_DIR` names another config folder, for tests, or for an agent session whose own output should
-never show your terms. Agent tools can set variables from settings checked into a repository: Claude Code's
-project `.claude/settings.json` applies to "everyone working in the project, checked into source control", its
+never show your terms. The guards and the plugin can each be given your real one: see
+[the guards' own folder](#a-config-folder-of-the-guards-own) and
+[the plugin's](#a-config-folder-of-the-plugins-own). Agent tools can set variables from settings checked into a
+repository: Claude Code's project `.claude/settings.json` applies to "everyone working in the project, checked into source control", its
 `env` key can be set in any settings file, and only a few named variables are kept from project settings. So a
 repository could point the variable at a config of its own choosing. The same goes for the variables that choose
 the platform's folder: `XDG_CONFIG_HOME`, `APPDATA`, and `HOME` or `USERPROFILE`. Whichever of them chose the
@@ -183,6 +185,41 @@ they run only if the repository had them when you installed; install again after
 `core.hooksPath` back. Running the repository's own setup step again, if it sets `core.hooksPath`, turns the guards
 off until you install them again.
 
+### A config folder of the guards' own
+
+A session whose commands read a `SECOND_READ_CONFIG_DIR` with no terms runs its `git commit`, `git push` and `gh`
+there too, so the guards would read that folder and check by patterns only. `SECOND_READ_GUARD_CONFIG_DIR` points
+the git hooks and the gh shim at your real config, set beside the other variable, for example in the session's
+settings:
+
+```json
+"env": {
+  "SECOND_READ_CONFIG_DIR": "/path/to/folder-with-no-terms",
+  "SECOND_READ_GUARD_CONFIG_DIR": "~/.config/second-read"
+}
+```
+
+- **What reads it:** only `commit-msg`, `pre-push` and the shim. `second-read check` and the plugin's hooks keep
+  reading `SECOND_READ_CONFIG_DIR`, and the plugin its `config_dir` option.
+- **What a guard prints:** while it's set, the guard's report goes into the session, so it never names a private
+  term, as the plugin's deny reasons don't. A term's finding gives its line, column and rule, with `(not shown)` in
+  place of the text, and a term anywhere else, in a branch's name, a file's name, a path or an error, reads
+  `[private term]`. Unset, a guard prints what it found, for you at your terminal.
+- **The rules:** the same as `SECOND_READ_CONFIG_DIR`'s, since a repository's settings can set it too. The folder
+  has to hold a `config.toml`, the path has to be absolute or start with `~`, and it can't be inside a git
+  repository, unless it's your account's own default folder. If any is wrong, every guard refuses until it's fixed;
+  a `gh` command that posts nothing still runs.
+- **Set but blank refuses too.** A repository's settings can set a variable but not unset it, so a blank value
+  there would otherwise turn yours off, and the guards would fall back to the folder with no terms.
+- **Where to set the pair:** in `.claude/settings.local.json` or with `--settings`, never in settings checked into
+  a repository. A project's shared `.claude/settings.json` overrides the same variable in your
+  user settings; the local file and `--settings` sit above it.
+- **What it doesn't hide:** the session's commands can see the variable, as they see every other. It names a folder,
+  not your terms, and your default folder is as easy to find. An empty `SECOND_READ_CONFIG_DIR` keeps your terms out
+  of what second-read prints into the session; it never kept the file from being read.
+
+Unset, the guards find your config as everything else does.
+
 ## The Claude Code plugin
 
 The plugin checks what Claude Code is about to post, before the tool call runs. When it finds something, it denies
@@ -210,8 +247,8 @@ the call and gives Claude the report as the reason, so Claude can fix the text a
 It checks:
 
 - **Bash commands that post through `gh`:** the same `gh` commands as the shim, behind `env`, `sudo` and the like,
-  and `gh api` calls that send fields (`-f`, `-F`, including `@file`) or an `--input` body, unless they're `GET`. A GraphQL query
-  is checked when it's a mutation.
+  and `gh api` calls that send fields (`-f`, `-F`, including `@file`) or an `--input` body, unless they're `GET`. A
+  GraphQL query is checked when it's a mutation.
 - **`git commit` and `git tag` messages**, from `-m`, `-F` and `--trailer`. What a push sends is the `pre-push`
   hook's to check.
 - **GitHub tools from MCP servers:** any tool with `github` in its name, in any case, apart from the ones that only
@@ -242,8 +279,9 @@ A reason about the work, such as a bug, a release or a code style you prefer, is
   contents. It runs `claude -p` with no tools, so they go only to the model provider your session already uses, and
   each check counts toward your usage limit or API billing.
 - **When it fails:** a timeout (90 seconds), a crash, or an answer it can't read refuses the post, and the reason
-  says why. So does a conversation it can't read, such as a turn you typed whose text it can't find. A crash within a few seconds, such as an overloaded API, is tried once more first. Once your account
-  reaches its usage limit, every post is refused until the limit resets or you turn the model check off.
+  says why. So does a conversation it can't read, such as a turn you typed whose text it can't find. A crash within
+  a few seconds, such as an overloaded API, is tried once more first. Once your account reaches its usage limit,
+  every post is refused until the limit resets or you turn the model check off.
 - **What it misses:** a reason you gave earlier than the 60,000 characters, or before a compaction or `/clear`. A
   paraphrase the model doesn't spot. Text you pasted from elsewhere can try to steer it. A message from another
   session that quotes you: what you typed there is the sending session's to check, with its own guards.
@@ -282,7 +320,9 @@ don't post aren't affected.
 
 The git hooks and the gh shim don't read the option: they run outside Claude Code, which gives it only to the
 plugin. The plugin checks every commit and tag message and gh post a session makes, but what a push adds is the
-`pre-push` hook's to check, and in such a session it reads the folder with no terms.
+`pre-push` hook's to check. Point the guards at your config with
+[`SECOND_READ_GUARD_CONFIG_DIR`](#a-config-folder-of-the-guards-own), or in such a session they read the folder
+with no terms.
 
 The plugin never approves a call. A clean post goes on to Claude Code's usual permission check. Its deny holds in
 `bypassPermissions` mode too: a session run with `--permission-mode bypassPermissions` on Claude Code 2.1.302 had

@@ -50,7 +50,8 @@ So the check has to run **before** a post goes out, and it can't rely on the per
   - every term on the user's list, matched case-insensitively at word boundaries, after Unicode normalisation.
 - **Configuration:**
   - the user's file in the platform's config folder (`~/.config/second-read/` where there is no other convention),
-    or in the folder `SECOND_READ_CONFIG_DIR` names: private terms, allowed emails, allowed paths, allowed account
+    or in the folder `SECOND_READ_CONFIG_DIR` names (the guards and the plugin can each be given another, sections 4
+    and 5): private terms, allowed emails, allowed paths, allowed account
     and machine names. A repository's own settings can set that variable, and the ones that choose the platform's
     folder (`XDG_CONFIG_HOME`, `APPDATA`, `HOME`), since Claude Code's checked-in project settings can set any but
     a few named variables. So whichever variable chose it, the folder must be absolute, outside every git
@@ -91,6 +92,18 @@ So the check has to run **before** a post goes out, and it can't rely on the per
   Grouped short flags are read as gh reads them, from each command's flags that take a value.
   Every other command passes straight through.
 
+- **Their own config folder:** `SECOND_READ_GUARD_CONFIG_DIR` points the git hooks and the shim at a config folder
+  that `check` and the plugin never read. It's for a session whose commands read a `SECOND_READ_CONFIG_DIR` with no
+  terms: the guards run there too, and would otherwise check its pushes by patterns only. It's a variable, so the
+  session's commands see it, but it names a folder, not the terms, which an empty `SECOND_READ_CONFIG_DIR` only keeps
+  out of what second-read prints. A repository's settings can set it, so it has `SECOND_READ_CONFIG_DIR`'s rules
+  (section 3), and a missing `config.toml` refuses even in the account's default folder. Set but blank refuses too:
+  settings can set a variable but not unset it, so a repository's blank value would otherwise turn off the user's,
+  and the user sets the pair in local settings, which sit above the project's shared ones. While it's set, a guard's
+  output goes into the session, so it names no private term: a term's finding gives its line, column and rule, and a
+  term anywhere else, an error included, is masked, as in the plugin's deny reasons (section 5). Unset, a guard
+  prints what it found, for the person at the terminal.
+
 These catch every agent that posts through `git` and `gh`, and the user too.
 
 ## 5. Agent adapters
@@ -121,9 +134,9 @@ What the guards can't see: an agent that posts through its own GitHub tool, or t
   - **Fails closed:** a verdict that flags the post refuses it, with the post's words and the user's. So does a
     timeout (90 seconds), a crash, output that doesn't fit the schema, a missing transcript, or one where no line
     reads as an entry, since its format isn't documented. With no typed turn read, so does a typed entry whose text
-    the check can't read, and a transcript with no user entry at all. With no typed turn, a call whose own turn (the hook
-    input's `prompt_id`) has no user entry in the transcript yet is refused too, since that turn may be typed. A
-    quick crash is tried once more, since it's more likely the API than the post.
+    the check can't read, and a transcript with no user entry at all. With no typed turn, a call whose own turn
+    (the hook input's `prompt_id`) has no user entry in the transcript yet is refused too, since that turn may be
+    typed. A quick crash is tried once more, since it's more likely the API than the post.
   - **Options:** `model_check` turns it off, and `model` picks the model, `haiku` by default. `config_dir` points
     the hooks at a config folder of their own, for a session whose commands read a `SECOND_READ_CONFIG_DIR` with
     no terms, so their output never shows the user's. Claude Code gives plugin options only to the plugin's hooks, and
@@ -135,9 +148,9 @@ What the guards can't see: an agent that posts through its own GitHub tool, or t
     model check's answer, is masked. A reason that can't be masked, since the terms can't be read, is replaced by
     why they couldn't.
   - **Its limits:** once the account reaches its usage limit, every post is refused until the limit resets or
-    the check is turned off. A reason given before the cap, or before a compaction or `/clear`, isn't seen. The transcript
-    is written asynchronously, so the newest turn, the likeliest to lead to a post, may be missing. It was there
-    in each headless run tried on Claude Code 2.1.302: a new session, a resumed one, and a call from a subagent,
+    the check is turned off. A reason given before the cap, or before a compaction or `/clear`, isn't seen. The
+    transcript is written asynchronously, so the newest turn, the likeliest to lead to a post, may be missing. It was
+    there in each headless run tried on Claude Code 2.1.302: a new session, a resumed one, and a call from a subagent,
     whose hook is given the main session's transcript. Interactive sessions weren't tried. The hook input's
     `prompt_id` matched the newest turn's `promptId` in the transcript, so a missing turn can be detected. The check
     does so only when the transcript has no typed turn, where a missing one would otherwise mean no model check;

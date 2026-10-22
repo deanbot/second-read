@@ -1275,3 +1275,130 @@ test("shim install never overwrites another gh, and uninstall removes only the s
   assert.equal(secondRead(scratch, ["shim", "uninstall", shimDir]).status, 0);
   assert.ok(!existsSync(join(shimDir, "gh")));
 });
+
+// An agent's session: its commands read a config folder with no terms, and the guards read the user's own.
+const noTerms = fresh("no-terms");
+writeFileSync(join(noTerms, "config.toml"), "terms = []\n");
+const session = { SECOND_READ_CONFIG_DIR: noTerms, SECOND_READ_GUARD_CONFIG_DIR: config };
+
+function noTerm(text: string, what: string) {
+  assert.ok(!text.toLowerCase().includes(TERM), `${what} names the term:\n${text}`);
+}
+
+test("with SECOND_READ_GUARD_CONFIG_DIR set, the guards check its terms and no report names one", () => {
+  const dir = installed();
+  const refused = run("git", ["commit", "-q", "--allow-empty", "-m", `Port the parser from ${TERM}`], dir, "", session);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /1:22 +private term +\(not shown\)/);
+  noTerm(refused.stderr, "commit-msg");
+  // The check itself still reads SECOND_READ_CONFIG_DIR.
+  assert.equal(secondRead(dir, ["check"], `Port the parser from ${TERM}`, session).status, 0);
+
+  // A term in a file's name, a branch's name and an added line.
+  bareRemote(dir);
+  assert.equal(commit(dir, "Start (#46)").status, 0);
+  writeFileSync(join(dir, `${TERM}.txt`), `notes on ${TERM}\nand the build\n`);
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "--no-verify", "-m", "Notes (#46)");
+  const pushed = run("git", ["push", "-q", "origin", `HEAD:refs/heads/${TERM}-notes`], dir, "", session);
+  assert.equal(pushed.status, 1);
+  assert.match(pushed.stderr, /1:10 +private term +\(not shown\)/);
+  assert.match(pushed.stderr, /In the name of branch \[private term\]-notes:/);
+  noTerm(pushed.stderr, "pre-push");
+
+  const { gh, called } = shimSetup();
+  for (const args of [
+    ["pr", "create", "--title", `Port ${TERM}`, "--body", "Clean"],
+    ["repo", "create", `example/${TERM}`, "--public"],
+    ["gist", "create", "-f", `${TERM}.md`],
+  ]) {
+    const result = gh(args, "", session);
+    assert.equal(result.status, 1, args.join(" "));
+    assert.match(result.stderr, /private term +\(not shown\)/, args.join(" "));
+    noTerm(result.stderr, args.join(" "));
+  }
+  assert.ok(!called());
+});
+
+test("with SECOND_READ_GUARD_CONFIG_DIR set, a guard's error doesn't name a term either", () => {
+  // The repository's folder is named after the term, and the error names its allowlist's path.
+  const dir = join(fresh("named"), TERM);
+  mkdirSync(dir);
+  git(dir, "init", "-q");
+  assert.equal(secondRead(dir, ["hooks", "install"]).status, 0);
+  writeFileSync(join(dir, ".second-read.toml"), "bogus = 1\n");
+  const refused = run("git", ["commit", "-q", "--allow-empty", "-m", "Clean (#46)"], dir, "", session);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /the check failed: .*\/\[private term\]\/\.second-read\.toml: line 1/);
+  noTerm(refused.stderr, "commit-msg");
+  // Unset, the error says it as it is.
+  const plain = run("git", ["commit", "-q", "--allow-empty", "-m", "Clean (#46)"], dir);
+  assert.match(plain.stderr, new RegExp(`/${TERM}/\\.second-read\\.toml: line 1`));
+});
+
+test("unset, SECOND_READ_GUARD_CONFIG_DIR changes nothing, and a report shows what it found", () => {
+  const dir = installed();
+  const refused = run("git", ["commit", "-q", "--allow-empty", "-m", `Port the parser from ${TERM}`], dir);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /1:22 +private term +"example-private-project"/);
+  // With only the session's empty folder, the guards read that, as before.
+  const empty = { SECOND_READ_CONFIG_DIR: noTerms };
+  assert.equal(run("git", ["commit", "-q", "--allow-empty", "-m", `Port ${TERM}`], dir, "", empty).status, 0);
+});
+
+test("a SECOND_READ_GUARD_CONFIG_DIR with no config.toml, a relative one, or one in a repository refuses", () => {
+  const inside = repo();
+  writeFileSync(join(inside, "config.toml"), "terms = []\n");
+  const cases: [string, RegExp][] = [
+    [fresh("guard-missing"), /SECOND_READ_GUARD_CONFIG_DIR is .*, which has no config\.toml\. Put one there, or unset/],
+    ["guard-config", /SECOND_READ_GUARD_CONFIG_DIR is "guard-config", which isn't an absolute path/],
+    [inside, /SECOND_READ_GUARD_CONFIG_DIR is .*, inside the repository at /],
+  ];
+  const dir = installed();
+  bareRemote(dir);
+  const { gh, called } = shimSetup();
+  for (const [folder, why] of cases) {
+    const env = { ...session, SECOND_READ_GUARD_CONFIG_DIR: folder };
+    const committed = run("git", ["commit", "-q", "--allow-empty", "-m", "Clean (#46)"], dir, "", env);
+    assert.equal(committed.status, 1, folder);
+    assert.match(committed.stderr, why);
+    git(dir, "commit", "-q", "--allow-empty", "--no-verify", "-m", "Clean (#46)");
+    const pushed = run("git", ["push", "-q", "origin", "main"], dir, "", env);
+    assert.notEqual(pushed.status, 0, folder);
+    assert.match(pushed.stderr, why);
+    const posted = gh(["issue", "create", "-t", "Clean", "-b", "Clean"], "", env);
+    assert.equal(posted.status, 2, folder);
+    assert.match(posted.stderr, why);
+    // A gh command that posts nothing doesn't read the config, so it still runs.
+    assert.equal(gh(["pr", "view", "5"], "", env).status, 3, folder);
+  }
+  assert.equal(called(), true);
+});
+
+test("a SECOND_READ_GUARD_CONFIG_DIR set but blank refuses, and doesn't fall back to SECOND_READ_CONFIG_DIR", () => {
+  // A repository's shared settings can set the variable to "" over the user's own value, but can't unset it.
+  const dir = installed();
+  bareRemote(dir);
+  const { gh, called } = shimSetup();
+  const hook = (name: string, args: string[], input: string, env: NodeJS.ProcessEnv) =>
+    secondRead(dir, ["hook", join(dir, ".git", "hooks", name), ...args], input, env);
+  writeFileSync(join(dir, "msg"), `Port the parser from ${TERM}\n`);
+  git(dir, "commit", "-q", "--allow-empty", "--no-verify", "-m", `Port ${TERM}`);
+  const push = `refs/heads/main ${head(dir)} refs/heads/main ${"0".repeat(40)}\n`;
+  for (const blank of ["", "  "]) {
+    const env = { ...session, SECOND_READ_GUARD_CONFIG_DIR: blank };
+    const why = /SECOND_READ_GUARD_CONFIG_DIR is set but blank\. Unset it, or name a folder/;
+    const committed = hook("commit-msg", [join(dir, "msg")], "", env);
+    assert.equal(committed.status, 2, JSON.stringify(blank));
+    assert.match(committed.stderr, why);
+    const pushed = hook("pre-push", ["origin", "unused"], push, env);
+    assert.equal(pushed.status, 2, JSON.stringify(blank));
+    assert.match(pushed.stderr, why);
+    const posted = gh(["issue", "create", "-t", "Clean", "-b", "Clean"], "", env);
+    assert.equal(posted.status, 2, JSON.stringify(blank));
+    assert.match(posted.stderr, why);
+  }
+  assert.ok(!called());
+  // A gh command that posts nothing doesn't read the config, so it still runs.
+  assert.equal(gh(["pr", "view", "5"], "", { ...session, SECOND_READ_GUARD_CONFIG_DIR: "" }).status, 3);
+});
