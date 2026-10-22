@@ -340,6 +340,21 @@ test("a config folder no SECOND_READ_CONFIG_DIR chose needs a config.toml, unles
   assert.equal((await run(["check"], TEXT, () => xdg, { home: account, accountHome: account })).code, 0);
 });
 
+test("SECOND_READ_GUARD_CONFIG_DIR may be the account's own default folder, even in a home that's a repository", async () => {
+  const home = join(scratch, "guard-home");
+  mkdirSync(join(home, ".git"), { recursive: true });
+  userFile('terms = ["acme-private-project"]\n')(join(home, ".config", "second-read"));
+  const argv = ["gh-shim", "/example/bin/gh", "issue", "create", "-t", "Port acme-private-project", "-b", "Clean"];
+  const guard = () => ({ SECOND_READ_GUARD_CONFIG_DIR: join(home, ".config", "second-read") });
+  const own = await run(argv, "", guard, { home, accountHome: home });
+  assert.equal(own.code, 1, own.err);
+  assert.match(own.err, /private term +\(not shown\)/);
+  // A folder there that isn't the account's own is in a repository like any other.
+  const other = await run(argv, "", guard, { home });
+  assert.equal(other.code, 2, other.err);
+  assert.match(other.err, /SECOND_READ_GUARD_CONFIG_DIR is \S+, inside the repository at /);
+});
+
 test("XDG_CONFIG_HOME and HOME have to be absolute, as SECOND_READ_CONFIG_DIR does", async () => {
   const cases: [NodeJS.ProcessEnv, RunOptions, RegExp][] = [
     [{ ...UNSET, XDG_CONFIG_HOME: "cfg" }, {}, /XDG_CONFIG_HOME is "cfg", which isn't an absolute path/],

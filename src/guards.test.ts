@@ -1352,7 +1352,7 @@ test("a SECOND_READ_GUARD_CONFIG_DIR with no config.toml, a relative one, or one
   const inside = repo();
   writeFileSync(join(inside, "config.toml"), "terms = []\n");
   const cases: [string, RegExp][] = [
-    [fresh("guard-missing"), /SECOND_READ_GUARD_CONFIG_DIR is .*, which has no config\.toml\. Put one there, or unset it/],
+    [fresh("guard-missing"), /SECOND_READ_GUARD_CONFIG_DIR is .*, which has no config\.toml\. Put one there, or unset/],
     ["guard-config", /SECOND_READ_GUARD_CONFIG_DIR is "guard-config", which isn't an absolute path/],
     [inside, /SECOND_READ_GUARD_CONFIG_DIR is .*, inside the repository at /],
   ];
