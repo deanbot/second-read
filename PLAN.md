@@ -121,9 +121,9 @@ What the guards can't see: an agent that posts through its own GitHub tool, or t
   - **Fails closed:** a verdict that flags the post refuses it, with the post's words and the user's. So does a
     timeout (90 seconds), a crash, output that doesn't fit the schema, a missing transcript, or one where no line
     reads as an entry, since its format isn't documented. With no typed turn read, so does a typed entry whose text
-    the check can't read, and a transcript with no user entry at all. With no typed turn, a call whose own turn (the hook
-    input's `prompt_id`) has no user entry in the transcript yet is refused too, since that turn may be typed. A
-    quick crash is tried once more, since it's more likely the API than the post.
+    the check can't read, and a transcript with no user entry at all. With no typed turn, a call whose own turn
+    (the hook input's `prompt_id`) has no user entry in the transcript yet is refused too, since that turn may be
+    typed. A quick crash is tried once more, since it's more likely the API than the post.
   - **Options:** `model_check` turns it off, and `model` picks the model, `haiku` by default. `config_dir` points
     the hooks at a config folder of their own, for a session whose commands read a `SECOND_READ_CONFIG_DIR` with
     no terms, so their output never shows the user's. Claude Code gives plugin options only to the plugin's hooks, and
@@ -135,9 +135,9 @@ What the guards can't see: an agent that posts through its own GitHub tool, or t
     model check's answer, is masked. A reason that can't be masked, since the terms can't be read, is replaced by
     why they couldn't.
   - **Its limits:** once the account reaches its usage limit, every post is refused until the limit resets or
-    the check is turned off. A reason given before the cap, or before a compaction or `/clear`, isn't seen. The transcript
-    is written asynchronously, so the newest turn, the likeliest to lead to a post, may be missing. It was there
-    in each headless run tried on Claude Code 2.1.302: a new session, a resumed one, and a call from a subagent,
+    the check is turned off. A reason given before the cap, or before a compaction or `/clear`, isn't seen. The
+    transcript is written asynchronously, so the newest turn, the likeliest to lead to a post, may be missing. It was
+    there in each headless run tried on Claude Code 2.1.302: a new session, a resumed one, and a call from a subagent,
     whose hook is given the main session's transcript. Interactive sessions weren't tried. The hook input's
     `prompt_id` matched the newest turn's `promptId` in the transcript, so a missing turn can be detected. The check
     does so only when the transcript has no typed turn, where a missing one would otherwise mean no model check;

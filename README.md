@@ -210,8 +210,8 @@ the call and gives Claude the report as the reason, so Claude can fix the text a
 It checks:
 
 - **Bash commands that post through `gh`:** the same `gh` commands as the shim, behind `env`, `sudo` and the like,
-  and `gh api` calls that send fields (`-f`, `-F`, including `@file`) or an `--input` body, unless they're `GET`. A GraphQL query
-  is checked when it's a mutation.
+  and `gh api` calls that send fields (`-f`, `-F`, including `@file`) or an `--input` body, unless they're `GET`. A
+  GraphQL query is checked when it's a mutation.
 - **`git commit` and `git tag` messages**, from `-m`, `-F` and `--trailer`. What a push sends is the `pre-push`
   hook's to check.
 - **GitHub tools from MCP servers:** any tool with `github` in its name, in any case, apart from the ones that only
@@ -242,8 +242,9 @@ A reason about the work, such as a bug, a release or a code style you prefer, is
   contents. It runs `claude -p` with no tools, so they go only to the model provider your session already uses, and
   each check counts toward your usage limit or API billing.
 - **When it fails:** a timeout (90 seconds), a crash, or an answer it can't read refuses the post, and the reason
-  says why. So does a conversation it can't read, such as a turn you typed whose text it can't find. A crash within a few seconds, such as an overloaded API, is tried once more first. Once your account
-  reaches its usage limit, every post is refused until the limit resets or you turn the model check off.
+  says why. So does a conversation it can't read, such as a turn you typed whose text it can't find. A crash within
+  a few seconds, such as an overloaded API, is tried once more first. Once your account reaches its usage limit,
+  every post is refused until the limit resets or you turn the model check off.
 - **What it misses:** a reason you gave earlier than the 60,000 characters, or before a compaction or `/clear`. A
   paraphrase the model doesn't spot. Text you pasted from elsewhere can try to steer it. A message from another
   session that quotes you: what you typed there is the sending session's to check, with its own guards.
