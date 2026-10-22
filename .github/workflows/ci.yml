@@ -14,10 +14,9 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
+# Both jobs below use the pull request's head and base from the event, not GitHub's merge commit: that is made
+# when the event fires and isn't remade when the base branch changes, so a retargeted pull request would be
+# checked and tested against its old base.
 jobs:
   changes:
     if: vars.CI_ENABLED != 'false'
@@ -27,13 +26,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      # A pull request runs on its merge commit, whose first parent is the base branch.
       - id: changed
         env:
-          BASE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || github.event.before }}
-        run: node .github/scripts/changed.mjs "$BASE" HEAD >> "$GITHUB_OUTPUT"
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          echo "Changes from $BASE to $HEAD_SHA"
+          node .github/scripts/changed.mjs "$BASE" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          tail -n 1 "$GITHUB_OUTPUT"
 
   test:
     needs: changes
@@ -47,6 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
