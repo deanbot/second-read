@@ -25,6 +25,24 @@ out. [PLAN.md](./PLAN.md) is the design source of truth. Read the section an iss
 - Toolchain majors may be newer than you remember. Read the installed docs in `node_modules` before writing
   config from memory.
 
+## CI
+
+- CI (`.github/workflows/ci.yml`) runs `npm ci` and `npm test` on every pull request and every push to `main`, on
+  Node 22 and Node 24. It tests a pull request's head commit, not GitHub's merge with the base. A change to
+  Markdown files only skips the tests. `npm run eval:judge` calls a model and stays out of CI.
+- The check to require before merge is `tests`. It passes when the tests passed on both Node versions, or when they
+  were skipped for a Markdown-only change.
+- PRs must be up to date with `main` before merge, so the head CI tested is what merges. Bring one up to date by
+  merging `main` into it, never by rebasing.
+- After changing a PR's base branch, wait for the new CI run's `tests` before merging. Until it reports, the head
+  still shows the green `tests` from the run against the old base.
+- To switch CI off, set the repository variable `CI_ENABLED` to `false`, in any case (Settings → Secrets and
+  variables → Actions → Variables). To switch it back on, delete the variable or set it to anything else; unset
+  means on.
+- While it's off, no tests run and the `tests` check fails, so nothing merges untested. A skipped job would count
+  as passing, which is why it fails instead. The ruleset has no bypass, so nothing merges until CI is switched back
+  on and `tests` runs again: push a new commit, or close and reopen the PR.
+
 ## Workflow
 
 - One branch per issue. Don't push to `main` or merge; the maintainer merges.
