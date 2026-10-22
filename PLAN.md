@@ -33,7 +33,8 @@ So the check has to run **before** a post goes out, and it can't rely on the per
   kind only.
 - **Exit codes:** `0` clean, `1` findings, `2` the check itself failed. A guard treats `2` as a refusal, so a broken
   check never waves a post through.
-- **The report** names each finding's category, the line, and the matched text. It is printed locally only.
+- **The report** names each finding's category, the line, and the matched text. It is printed locally only. The
+  Claude Code plugin's report goes into the agent's session, so it never names a private term (section 5).
 - **Checks:**
   - paths under the home folder, written with the real account name or as `~/` followed by something other than an
     allowed generic name;
@@ -48,8 +49,9 @@ So the check has to run **before** a post goes out, and it can't rely on the per
     can switch off single words;
   - every term on the user's list, matched case-insensitively at word boundaries, after Unicode normalisation.
 - **Configuration:**
-  - the user's file in the platform's config folder (`~/.config/second-read/` where there is no other convention):
-    private terms, allowed emails, allowed paths, allowed account and machine names;
+  - the user's file in the platform's config folder (`~/.config/second-read/` where there is no other convention),
+    or in the folder `SECOND_READ_CONFIG_DIR` names: private terms, allowed emails, allowed paths, allowed account
+    and machine names;
   - a repository's `.second-read.toml`: an allowlist only, never private terms. Anyone with write access can change
     it, so an entry that switches a whole check off is an error, and `pre-push` refuses a change to it until the
     new version's blob id, or the id of the commit that deletes it, is given. Its `exempt_files` globs name files
@@ -105,7 +107,16 @@ What the guards can't see: an agent that posts through its own GitHub tool, or t
     timeout (90 seconds), a crash, output that doesn't fit the schema, a missing transcript, or one with no user
     turn, since its format isn't documented. A quick crash is tried once more, since it's more likely the API than
     the post.
-  - **Options:** `model_check` turns it off, and `model` picks the model, `haiku` by default.
+  - **Options:** `model_check` turns it off, and `model` picks the model, `haiku` by default. `config_dir` points
+    the hooks at a config folder of their own, for a session whose commands read an empty `SECOND_READ_CONFIG_DIR`
+    so their output never shows the user's terms. Claude Code gives plugin options only to the plugin's hooks, and
+    reads them only from user, `--settings` and managed settings, so neither the session's commands nor a
+    repository can see or set it. A folder without a `config.toml`, or a path that isn't absolute, refuses every
+    post.
+  - **What it tells Claude:** a deny reason never names a private term. A term's finding gives its line, column and
+    rule but not its text, and a term anywhere else in the reason, in a path, a file name, a quoted command or the
+    model check's answer, is masked. A reason that can't be masked, since the terms can't be read, is replaced by
+    why they couldn't.
   - **Its limits:** once the account reaches its usage limit, every post is refused until the limit resets or
     the check is turned off. A reason given before the cap, or before a compaction or `/clear`, isn't seen. The transcript
     is written asynchronously, so the newest turn, the likeliest to lead to a post, may be missing. It was there

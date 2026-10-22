@@ -11,6 +11,7 @@ import {
   loadRepoConfig,
   loadUserConfig,
   mergeRules,
+  pluginConfigDir,
   USER_FILE_TEMPLATE,
 } from "./config.ts";
 
@@ -29,6 +30,20 @@ test("the config folder follows the platform's convention, and the override wins
   assert.equal(configDir({ XDG_CONFIG_HOME: "/x/config" }, "linux", "/home/example"), "/x/config/second-read");
   assert.equal(configDir({ APPDATA: "/x/Roaming" }, "win32", "/x"), join("/x/Roaming", "second-read"));
   assert.equal(configDir({ SECOND_READ_CONFIG_DIR: "/x/sr", XDG_CONFIG_HOME: "/y" }, "linux", "/h"), "/x/sr");
+});
+
+test("the plugin's config_dir option is an absolute folder, ~ for the home folder, or unset when blank", () => {
+  const home = "/Users/example";
+  assert.equal(pluginConfigDir({}, home), undefined);
+  assert.equal(pluginConfigDir({ CLAUDE_PLUGIN_OPTION_CONFIG_DIR: "  " }, home), undefined);
+  assert.equal(pluginConfigDir({ CLAUDE_PLUGIN_OPTION_CONFIG_DIR: " /x/sr " }, home), "/x/sr");
+  assert.equal(pluginConfigDir({ CLAUDE_PLUGIN_OPTION_CONFIG_DIR: "~/sr" }, home), "/Users/example/sr");
+  assert.equal(pluginConfigDir({ CLAUDE_PLUGIN_OPTION_CONFIG_DIR: "~" }, home), home);
+  // SECOND_READ_CONFIG_DIR is what everything else reads; the option doesn't fall back to it.
+  assert.equal(pluginConfigDir({ SECOND_READ_CONFIG_DIR: "/x/empty" }, home), undefined);
+  for (const value of ["sr", "./sr", "~sr", "~other/sr"]) {
+    assert.throws(() => pluginConfigDir({ CLAUDE_PLUGIN_OPTION_CONFIG_DIR: value }, home), ConfigError, value);
+  }
 });
 
 test("a missing user file is an empty config", () => {

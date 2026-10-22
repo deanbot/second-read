@@ -21,6 +21,11 @@
       "title": "Model check's model",
       "description": "The model the model check runs, as claude --model takes it.",
       "default": "haiku"
+    },
+    "config_dir": {
+      "type": "string",
+      "title": "Config folder",
+      "description": "The folder whose config.toml the plugin's checks read, in place of SECOND_READ_CONFIG_DIR or the usual config folder. Only the plugin's hooks read it, so a session's own commands can read an empty folder while its posts are still checked against your private terms. Leave it empty to find the config as everything else does."
     }
   }
 }

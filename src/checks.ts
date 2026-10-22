@@ -245,11 +245,31 @@ export function checkTerms(input: string, options: CheckOptions): Finding[] {
 }
 
 function neverAllowed(folded: Folded, { identity, rules }: CheckOptions): Span[] {
-  const terms = rules.terms.flatMap((term) => {
+  return [...termSpans(folded, rules.terms), ...ownEmailSpans(folded, identity.emails, rules.userAllowedEmails)];
+}
+
+function termSpans(folded: Folded, terms: string[]): Span[] {
+  return terms.flatMap((term) => {
     const re = termPattern(term);
     return re ? foldedSpans(folded, re, "private term") : [];
   });
-  return [...terms, ...ownEmailSpans(folded, identity.emails, rules.userAllowedEmails)];
+}
+
+export const MASKED_TERM = "[private term]";
+
+// The text with every private term in it replaced, matched as the check matches them. It's for what second-read
+// itself prints into an agent's session, never for the text being checked.
+export function maskTerms(input: string, terms: string[]): string {
+  // Terms that overlap are masked as one, so no part of either is left between two masks.
+  const merged: [number, number][] = [];
+  for (const { start, end } of termSpans(fold(input), terms).sort((a, b) => a.start - b.start)) {
+    const last = merged.at(-1);
+    if (last && start < last[1]) last[1] = Math.max(last[1], end);
+    else merged.push([start, end]);
+  }
+  let out = input;
+  for (const [start, end] of merged.reverse()) out = out.slice(0, start) + MASKED_TERM + out.slice(end);
+  return out;
 }
 
 // The user's own addresses, whatever a repository allows: a pattern there such as "*@*.co.uk" or "*@gmail.com"

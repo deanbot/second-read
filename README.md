@@ -69,7 +69,8 @@ echo "$MESSAGE" | second-read check --kind commit
 refuse on anything but `0`. The report names each finding's category, line and text, and is printed only on your
 machine.
 
-Your config file is `~/.config/second-read/config.toml` (`$XDG_CONFIG_HOME`, or `%APPDATA%` on Windows):
+Your config file is `~/.config/second-read/config.toml` (`$XDG_CONFIG_HOME`, or `%APPDATA%` on Windows), or
+`config.toml` in the folder `SECOND_READ_CONFIG_DIR` names:
 
 ```toml
 terms = ["example-private-project"]       # never posted; see below
@@ -210,6 +211,39 @@ A reason about the work, such as a bug, a release or a code style you prefer, is
 
 To turn it off, or pick another model than `haiku`, change second-read's **Model check** or **Model check's model**
 in `/config`, or in `/plugin` under second-read. The word check keeps running either way.
+
+### What the plugin tells Claude
+
+A deny reason goes into the session, so it never names one of your private terms. A term's finding gives its line,
+column and rule, with `(not shown)` in place of the text, and a term anywhere else in the reason, such as inside a
+path, a file name or the model check's answer, reads `[private term]`. Claude can still find the spot and fix it.
+The reason is all that's masked: the post itself is checked as it is, and never changed.
+
+### A config folder of the plugin's own
+
+A session that works on a repository where `second-read check` runs all day, such as second-read's own, can set
+`SECOND_READ_CONFIG_DIR` to an empty folder, so its commands' output never shows your terms. The plugin's hooks
+run in that session and would read the empty folder too. Point them at your real config with the **Config folder**
+option, `config_dir`, in `/config` or in `/plugin` under second-read:
+
+```json
+"pluginConfigs": {
+  "second-read@second-read": { "options": { "config_dir": "~/.config/second-read" } }
+}
+```
+
+That's the entry it writes to your user settings. Claude Code gives the option only to the plugin's hooks: commands
+Claude runs never see it, and `second-read check` keeps reading `SECOND_READ_CONFIG_DIR`. It reads plugin options
+only from your user settings, a `--settings` file and managed settings, so a repository can't set it. Set, it wins
+over `SECOND_READ_CONFIG_DIR` for the hooks. Left empty, the hooks find your config as everything else does.
+
+The folder has to hold a `config.toml`, and the path has to be absolute or start with `~`. If either is wrong,
+every post is refused until it's fixed, since the hooks would otherwise go on without your terms. Calls that
+don't post aren't affected.
+
+The git hooks and the gh shim don't read the option: they run outside Claude Code, which gives it only to the
+plugin. The plugin checks every commit and tag message and gh post a session makes, but what a push adds is the
+`pre-push` hook's to check, and in such a session it reads the empty folder.
 
 The plugin never approves a call. A clean post goes on to Claude Code's usual permission check. Its deny holds in
 `bypassPermissions` mode too: a session run with `--permission-mode bypassPermissions` on Claude Code 2.1.302 had
