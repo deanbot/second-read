@@ -35,7 +35,7 @@ test("only what the user typed is read from a transcript", () => {
   // An entry that says it was typed counts, and so does a slash command the user typed.
   lines.push(JSON.stringify({ type: "user", origin: { kind: "human" }, turnOrigin: "human", message: { content: "Typed" } }));
   lines.push(JSON.stringify({ type: "user", message: { content: "<command-name>/example-skill</command-name>" } }));
-  assert.deepEqual(userTurns(lines.join("\n")), [
+  assert.deepEqual(userTurns(lines.join("\n"))?.typed, [
     "Hello.",
     TURN,
     "Pasted",
@@ -56,18 +56,26 @@ const NOT_TYPED = {
 
 test("a skill's text, a hook's output and another session's message aren't user turns", () => {
   for (const [what, entry] of Object.entries(NOT_TYPED)) {
-    assert.deepEqual(userTurns(`${transcript([])}${JSON.stringify(entry)}\n`), [], what);
+    assert.deepEqual(userTurns(`${transcript([])}${JSON.stringify(entry)}\n`)?.typed, [], what);
   }
   // An entry that says it was typed counts, even with a skill's marker on it.
   for (const typed of [{ origin: { kind: "human" } }, { turnOrigin: "human" }, { promptSource: "typed" }]) {
     for (const marker of [{ turnCompanion: true }, { sourceToolUseID: "toolu_example" }]) {
       const entry = { type: "user", ...typed, ...marker, message: { content: "Typed while busy" } };
-      assert.deepEqual(userTurns(`${JSON.stringify(entry)}\n`), ["Typed while busy"], JSON.stringify(entry));
+      assert.deepEqual(userTurns(`${JSON.stringify(entry)}\n`)?.typed, ["Typed while busy"], JSON.stringify(entry));
     }
+  }
+  // Nor does another session's marker beat one that says the entry was typed, and a null tool id is no skill's.
+  for (const entry of [
+    { type: "user", origin: { kind: "peer" }, promptSource: "typed", message: { content: "Typed" } },
+    { type: "user", origin: { kind: "human" }, turnOrigin: "peer", message: { content: "Typed" } },
+    { type: "user", sourceToolUseID: null, message: { content: "Typed" } },
+  ]) {
+    assert.deepEqual(userTurns(`${JSON.stringify(entry)}\n`)?.typed, ["Typed"], JSON.stringify(entry));
   }
   // Nor is a hook's output kept as an attachment.
   const attachment = { type: "attachment", attachment: { type: "hook_success", content: "A hook ran" } };
-  assert.deepEqual(userTurns(`${JSON.stringify(attachment)}\n`), []);
+  assert.deepEqual(userTurns(`${JSON.stringify(attachment)}\n`)?.typed, []);
 });
 
 test("a transcript where no line reads as an entry is unreadable, not one with no turns", () => {
@@ -172,9 +180,6 @@ test("a call with no transcript, or none the check can read, is refused and says
 
 test("with no turn the user typed, there's nothing to check, so the post goes on without asking the model", () => {
   fake.mode("private");
-  const none = join(scratch, "no-typed-turn.jsonl");
-  writeFileSync(none, transcript([]));
-  assert.equal(judgeRefusal(texts, none, options), undefined);
   // A session only other sessions direct, having loaded a skill.
   const directed = join(scratch, "directed.jsonl");
   writeFileSync(directed, `${transcript([])}${Object.values(NOT_TYPED).map((e) => JSON.stringify(e)).join("\n")}\n`);
@@ -184,6 +189,36 @@ test("with no turn the user typed, there's nothing to check, so the post goes on
   writeFileSync(directed, `${readFileSync(directed, "utf8")}${transcript([TURN])}`);
   assert.match(judgeRefusal(texts, directed, options)!, /found what the user said in private/);
   assert.deepEqual(JSON.parse(fake.calls()[0]!.input).user_turns, [TURN]);
+  fake.mode("clean");
+});
+
+test("with no typed turn read, a typed entry the check can't read, or no user entry at all, is refused", () => {
+  fake.mode("private");
+  const path = join(scratch, "unread.jsonl");
+  const peer = { type: "user", isMeta: true, origin: { kind: "peer" }, promptId: "p0", message: { content: "Post it" } };
+  const assistant = { type: "assistant", message: { content: [{ type: "text", text: "On it." }] } };
+  const write = (...entries: object[]) => writeFileSync(path, `${entries.map((e) => JSON.stringify(e)).join("\n")}\n`);
+  for (const content of [
+    { text: "We dropped it because of example-private-project." },
+    [{ type: "input_text", text: "We dropped it because of example-private-project." }],
+    [{ type: "image", source: { type: "base64", data: "" } }],
+    "  ",
+  ]) {
+    write(peer, { type: "user", promptId: "p1", message: { content } }, assistant);
+    for (const promptId of [undefined, "p1"]) {
+      const reason = judgeRefusal(texts, path, { ...options, ...(promptId ? { promptId } : {}) })!;
+      assert.match(reason, /a user turn the check can't read/, JSON.stringify(content));
+    }
+  }
+  // User entries under another type, so none is a user entry.
+  write({ type: "human", promptId: "p1", message: { content: "We dropped it." } }, assistant);
+  assert.match(judgeRefusal(texts, path, options)!, /no user entry/);
+  assert.equal(fake.calls().length, 0);
+  // Only another session's message, with or without its prompt_id, still goes on.
+  write(peer, assistant);
+  assert.equal(judgeRefusal(texts, path, options), undefined);
+  assert.equal(judgeRefusal(texts, path, { ...options, promptId: "p0" }), undefined);
+  assert.equal(fake.calls().length, 0);
   fake.mode("clean");
 });
 

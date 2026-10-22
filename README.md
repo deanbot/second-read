@@ -242,7 +242,7 @@ A reason about the work, such as a bug, a release or a code style you prefer, is
   contents. It runs `claude -p` with no tools, so they go only to the model provider your session already uses, and
   each check counts toward your usage limit or API billing.
 - **When it fails:** a timeout (90 seconds), a crash, or an answer it can't read refuses the post, and the reason
-  says why. A crash within a few seconds, such as an overloaded API, is tried once more first. Once your account
+  says why. So does a conversation it can't read, such as a turn you typed whose text it can't find. A crash within a few seconds, such as an overloaded API, is tried once more first. Once your account
   reaches its usage limit, every post is refused until the limit resets or you turn the model check off.
 - **What it misses:** a reason you gave earlier than the 60,000 characters, or before a compaction or `/clear`. A
   paraphrase the model doesn't spot. Text you pasted from elsewhere can try to steer it. A message from another

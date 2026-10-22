@@ -91,12 +91,20 @@ export interface JudgeOptions {
   promptId?: string;
 }
 
-// What the user typed, oldest first, from a Claude Code transcript, or undefined when no line of it reads as an
-// entry. Tool results, the text Claude Code adds itself (a skill's text, a hook's output), a subagent's turns and
-// messages from other sessions aren't the user's. The format isn't documented, so only entries marked as one of those
-// are skipped, and any other user entry counts as typed: a marker that changes leaves the check stricter, not off.
-export function userTurns(transcript: string): string[] | undefined {
-  const turns: string[] = [];
+// The user entries of a transcript: the text of each the user typed, oldest first, whether a typed one had no text
+// the check reads, and whether there was any user entry at all.
+export interface Turns {
+  typed: string[];
+  unread: boolean;
+  user: boolean;
+}
+
+// What the user typed, from a Claude Code transcript, or undefined when no line of it reads as an entry. Tool
+// results, the text Claude Code adds itself (a skill's text, a hook's output), a subagent's turns and messages from
+// other sessions aren't the user's. The format isn't documented, so only entries marked as one of those are skipped,
+// and any other user entry counts as typed, read or not: a marker that changes leaves the check stricter, not off.
+export function userTurns(transcript: string): Turns | undefined {
+  const turns: Turns = { typed: [], unread: false, user: false };
   let readable = false;
   for (const line of transcript.split("\n")) {
     if (line.trim() === "") continue;
@@ -110,12 +118,14 @@ export function userTurns(transcript: string): string[] | undefined {
     readable = true;
     const { type, isMeta, isSidechain, turnCompanion, sourceToolUseID, origin, turnOrigin, promptSource, message } =
       entry as Record<string, unknown>;
-    if (type !== "user" || isMeta === true || isSidechain === true) continue;
+    if (type !== "user") continue;
+    turns.user = true;
+    if (isMeta === true || isSidechain === true) continue;
+    // Another session's or a skill's markers, unless the entry also says it was typed: the stricter reading wins.
     const kind = (origin as { kind?: unknown } | undefined)?.kind;
-    if (kind === "peer" || turnOrigin === "peer") continue;
-    // A skill's markers, unless the entry also says it was typed: the stricter reading wins.
     const typed = kind === "human" || turnOrigin === "human" || promptSource === "typed";
-    if (!typed && (turnCompanion === true || sourceToolUseID !== undefined)) continue;
+    const peer = kind === "peer" || turnOrigin === "peer";
+    if (!typed && (peer || turnCompanion === true || typeof sourceToolUseID === "string")) continue;
     const content = (message as { content?: unknown } | undefined)?.content;
     let text: string | undefined;
     if (typeof content === "string") text = content;
@@ -124,7 +134,8 @@ export function userTurns(transcript: string): string[] | undefined {
       if (blocks.some((b) => b?.type === "tool_result")) continue;
       text = blocks.flatMap((b) => (b?.type === "text" && typeof b.text === "string" ? [b.text] : [])).join("\n");
     }
-    if (text !== undefined && text.trim() !== "") turns.push(text);
+    if (text !== undefined && text.trim() !== "") turns.typed.push(text);
+    else turns.unread = true;
   }
   return readable ? turns : undefined;
 }
@@ -255,7 +266,10 @@ export function judgeRefusal(
   }
   const turns = userTurns(transcript);
   if (turns === undefined) return failed("no line of the transcript reads as an entry, so its format may have changed");
-  if (turns.length === 0) {
+  if (turns.typed.length === 0) {
+    // A typed entry with no text the check reads, or no user entry at all, may be a format change, not no turn.
+    if (turns.unread) return failed("the transcript has a user turn the check can't read, so its format may have changed");
+    if (!turns.user) return failed("the transcript has no user entry, so its format may have changed");
     // The transcript is written as the session goes, so the turn that led to this call may not be in it yet, and
     // that turn may be one the user typed.
     if (options.promptId !== undefined && !hasPrompt(transcript, options.promptId)) {
@@ -263,7 +277,7 @@ export function judgeRefusal(
     }
     return undefined;
   }
-  const verdict = judge(judgeInput(recentTurns(turns), texts), options);
+  const verdict = judge(judgeInput(recentTurns(turns.typed), texts), options);
   if (typeof verdict === "string") return failed(verdict);
   if (!verdict.flagged) return undefined;
   const quote = options.quote ?? JSON.stringify;

@@ -113,14 +113,15 @@ What the guards can't see: an agent that posts through its own GitHub tool, or t
     data. A user-role entry marked as something else isn't a typed turn: a skill's text or a hook's output
     (`isMeta`, `turnCompanion`, `sourceToolUseID`), a tool's result, a subagent's prompt, and a message from another
     session (`origin.kind` or `turnOrigin` of `peer`). An entry also marked as typed (`human`, or a `promptSource`
-    of `typed`) counts despite a skill's marker. Any other user entry counts as typed, so a marker the format renames
-    leaves the check stricter, not off.
+    of `typed`) counts despite a skill's or another session's marker. Any other user entry counts as typed, so a
+    marker the format renames leaves the check stricter, not off.
   - **No typed turn:** a session that only other sessions direct has nothing private to carry, so its posts go on
     without the model. The word check still runs. A message from another session that quotes the user is the
     sending session's to check.
   - **Fails closed:** a verdict that flags the post refuses it, with the post's words and the user's. So does a
     timeout (90 seconds), a crash, output that doesn't fit the schema, a missing transcript, or one where no line
-    reads as an entry, since its format isn't documented. With no typed turn, a call whose own turn (the hook
+    reads as an entry, since its format isn't documented. With no typed turn read, so does a typed entry whose text
+    the check can't read, and a transcript with no user entry at all. With no typed turn, a call whose own turn (the hook
     input's `prompt_id`) has no user entry in the transcript yet is refused too, since that turn may be typed. A
     quick crash is tried once more, since it's more likely the API than the post.
   - **Options:** `model_check` turns it off, and `model` picks the model, `haiku` by default. `config_dir` points
