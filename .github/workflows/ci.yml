@@ -1,0 +1,82 @@
+# Runs `npm test` on every pull request and push to main. The `tests` job is the check a ruleset requires: it
+# passes when the tests passed on every Node version, or when the change touched only Markdown files.
+# Setting the repository variable CI_ENABLED to false switches CI off; see AGENTS.md.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    if: vars.CI_ENABLED != 'false'
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.changed.outputs.tests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # A pull request runs on its merge commit, whose first parent is the base branch.
+      - id: changed
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || github.event.before }}
+        run: node .github/scripts/changed.mjs "$BASE" HEAD >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: changes
+    if: needs.changes.outputs.tests == 'true'
+    name: test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.x", "24.x"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm test
+
+  # A skipped job counts as passing for a required check, so this job runs even when CI is switched off, and fails.
+  tests:
+    needs: [changes, test]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          CI_ENABLED: ${{ vars.CI_ENABLED }}
+          CHANGES: ${{ needs.changes.result }}
+          TESTS: ${{ needs.changes.outputs.tests }}
+          TEST: ${{ needs.test.result }}
+        run: |
+          if [ "$CI_ENABLED" = false ]; then
+            echo "::error::CI is switched off: the repository variable CI_ENABLED is false. AGENTS.md says what to do."
+            exit 1
+          fi
+          if [ "$CHANGES" != success ]; then
+            echo "::error::The change check ended with: $CHANGES"
+            exit 1
+          fi
+          if [ "$TESTS" = false ] && [ "$TEST" = skipped ]; then
+            echo "Only Markdown files changed, so the tests were skipped."
+          elif [ "$TESTS" = true ] && [ "$TEST" = success ]; then
+            echo "The tests passed."
+          else
+            echo "::error::The tests ended with: $TEST"
+            exit 1
+          fi

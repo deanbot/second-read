@@ -25,6 +25,20 @@ out. [PLAN.md](./PLAN.md) is the design source of truth. Read the section an iss
 - Toolchain majors may be newer than you remember. Read the installed docs in `node_modules` before writing
   config from memory.
 
+## CI
+
+- CI (`.github/workflows/ci.yml`) runs `npm ci` and `npm test` on every pull request and every push to `main`, on
+  Node 22 and Node 24. A change to Markdown files only skips the tests. `npm run eval:judge` calls a model and
+  stays out of CI.
+- The check to require before merge is `tests`. It passes when the tests passed on both Node versions, or when they
+  were skipped for a Markdown-only change.
+- To switch CI off, set the repository variable `CI_ENABLED` to `false` (Settings → Secrets and variables →
+  Actions → Variables). To switch it back on, delete the variable or set it to anything else; unset means on.
+- While it's off, no tests run and the `tests` check fails, so nothing merges untested. A skipped job would count
+  as passing, which is why it fails instead. To merge then, either switch CI back on and push a new commit (or close
+  and reopen the PR) so CI runs again, or run `npm test` on the PR's head yourself and merge through the ruleset's
+  bypass.
+
 ## Workflow
 
 - One branch per issue. Don't push to `main` or merge; the maintainer merges.
