@@ -291,12 +291,13 @@ test("the command the plugin's hooks.json names runs the hook from the source", 
   assert.match(hook(bash(`gh issue create -t "${LEAKY}" -b "${CLEAN}"`), [handler.command, ...args]).reason, /title/);
 });
 
-// A session that works on second-read reads an empty config folder, so its own output never shows the user's terms.
-// The plugin's config_dir option points its hooks at the real one.
+// A session that works on second-read reads a config folder with no terms, so its own output never shows the user's
+// terms. The plugin's config_dir option points its hooks at the real one.
 const empty = join(scratch, "empty");
 const own = join(scratch, "own");
 mkdirSync(empty, { recursive: true });
 mkdirSync(own, { recursive: true });
+writeFileSync(join(empty, "config.toml"), "terms = []\n");
 writeFileSync(join(own, "config.toml"), `terms = ["${TERM}"]\n`);
 const session = { SECOND_READ_CONFIG_DIR: empty };
 
@@ -384,6 +385,24 @@ test("a term is masked before a value is quoted, so an escaped newline or backsl
   assert.match(judged, /carries what the user said: "the \[private term\] launch"/, judged);
   assert.doesNotMatch(judged, /example/i, judged);
   fake.mode("clean");
+});
+
+test("the hook refuses a SECOND_READ_CONFIG_DIR inside a repository, wherever a post goes, and no other call", () => {
+  fake.mode("clean");
+  mkdirSync(join(repo, "config-folder"), { recursive: true });
+  writeFileSync(join(repo, "config-folder", "config.toml"), "terms = []\n");
+  const inRepo = { SECOND_READ_CONFIG_DIR: join(repo, "config-folder") };
+  assert.match(hook(prBody(LEAKY), undefined, inRepo).reason, /SECOND_READ_CONFIG_DIR is .*config-folder, inside the repository/);
+  // A post that goes to a folder in no repository, or in another, is refused just the same.
+  for (const cwd of [home, join(scratch, "other-repo")]) {
+    if (cwd !== home) assert.equal(spawnSync("git", ["init", "-q", cwd], { env }).status, 0);
+    const reason = hook({ ...prBody(LEAKY), cwd }, undefined, inRepo).reason;
+    assert.match(reason, /SECOND_READ_CONFIG_DIR is .*config-folder, inside the repository/, cwd);
+  }
+  assert.equal(hook(bash(`ls -la`), undefined, inRepo).denied, false);
+  // config_dir, which no repository can set, takes the hook past it.
+  assert.equal(hook(prBody(LEAKY), undefined, { ...inRepo, CLAUDE_PLUGIN_OPTION_CONFIG_DIR: own }).denied, true);
+  assert.match(hook(prBody(LEAKY), undefined, { ...inRepo, CLAUDE_PLUGIN_OPTION_CONFIG_DIR: own }).reason, /\(not shown\)/);
 });
 
 test("a reason the hook can't mask, since the terms can't be read, gives only why", () => {

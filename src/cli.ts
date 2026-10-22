@@ -31,6 +31,15 @@ function gitEmails(): string[] {
   return result.stdout.split("\n").filter((e) => e.trim() !== "");
 }
 
+// From the OS account, not HOME, which a repository's own settings can set. No account entry means none.
+function accountHome(): string | undefined {
+  try {
+    return userInfo().homedir;
+  } catch {
+    return undefined;
+  }
+}
+
 async function readStdin(): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
@@ -43,6 +52,7 @@ process.exitCode = await main({
   platform: process.platform,
   cwd: process.cwd(),
   identity: systemIdentity,
+  accountHome,
   command: [process.execPath, fileURLToPath(import.meta.url)],
   readStdin,
   stdinIsTTY: process.stdin.isTTY === true,

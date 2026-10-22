@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import {
   ConfigError,
-  configDir,
+  configFolder,
   exemptMatcher,
   findRepoConfig,
+  insideRepository,
+  isAccountConfigDir,
   loadRepoConfig,
   loadUserConfig,
   mergeRules,
@@ -26,10 +28,71 @@ function write(name: string, text: string): string {
 }
 
 test("the config folder follows the platform's convention, and the override wins", () => {
-  assert.equal(configDir({}, "darwin", "/Users/example"), "/Users/example/.config/second-read");
-  assert.equal(configDir({ XDG_CONFIG_HOME: "/x/config" }, "linux", "/home/example"), "/x/config/second-read");
-  assert.equal(configDir({ APPDATA: "/x/Roaming" }, "win32", "/x"), join("/x/Roaming", "second-read"));
-  assert.equal(configDir({ SECOND_READ_CONFIG_DIR: "/x/sr", XDG_CONFIG_HOME: "/y" }, "linux", "/h"), "/x/sr");
+  const dir = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform, home: string) => configFolder(env, platform, home).dir;
+  assert.equal(dir({}, "darwin", "/Users/example"), "/Users/example/.config/second-read");
+  assert.equal(dir({ XDG_CONFIG_HOME: "/x/config" }, "linux", "/home/example"), "/x/config/second-read");
+  assert.equal(dir({ APPDATA: "/x/Roaming" }, "win32", "/x"), join("/x/Roaming", "second-read"));
+  assert.equal(dir({}, "win32", "/x"), join("/x", "AppData", "Roaming", "second-read"));
+  assert.equal(dir({ SECOND_READ_CONFIG_DIR: "/x/sr", XDG_CONFIG_HOME: "/y" }, "linux", "/h"), "/x/sr");
+  // Each folder names the variable that chose it, for a message.
+  assert.deepEqual(configFolder({ XDG_CONFIG_HOME: "~/c" }, "linux", "/h"), { dir: "/h/c/second-read", variable: "XDG_CONFIG_HOME", value: "/h/c" });
+  assert.deepEqual(configFolder({}, "linux", "/h"), { dir: "/h/.config/second-read", variable: "HOME", value: "/h" });
+});
+
+test("every variable that chooses the config folder takes ~ for the home folder, as settings files hand it over unexpanded, and no relative path", () => {
+  const dir = (env: NodeJS.ProcessEnv, home = "/home/example") => configFolder(env, "linux", home).dir;
+  assert.equal(dir({ SECOND_READ_CONFIG_DIR: "~/sr" }), "/home/example/sr");
+  assert.equal(dir({ SECOND_READ_CONFIG_DIR: "~" }), "/home/example");
+  assert.equal(dir({ XDG_CONFIG_HOME: "~/c" }), "/home/example/c/second-read");
+  assert.equal(configFolder({ APPDATA: "~/r" }, "win32", "/x").dir, join("/x/r", "second-read"));
+  for (const value of ["sr", "./sr", "../sr", "~sr", " /x/sr"]) {
+    assert.throws(() => dir({ SECOND_READ_CONFIG_DIR: value }), /SECOND_READ_CONFIG_DIR is .*, which isn't an absolute path/, value);
+    assert.throws(() => dir({ XDG_CONFIG_HOME: value }), /XDG_CONFIG_HOME is .*, which isn't an absolute path/, value);
+    assert.throws(() => configFolder({ APPDATA: value }, "win32", "/x"), /APPDATA is .*, which isn't an absolute path/, value);
+  }
+  // A relative home folder makes ~ relative too.
+  for (const home of [".", "h", ""]) {
+    assert.throws(() => dir({}, home), /HOME is .*, which isn't an absolute path/, home);
+    assert.throws(() => dir({ XDG_CONFIG_HOME: "~/c" }, home), /XDG_CONFIG_HOME/, home);
+  }
+});
+
+test("the account's own config folder is the default one under the account's home, by its real path", () => {
+  const account = join(scratch, "account");
+  mkdirSync(join(account, ".config", "second-read"), { recursive: true });
+  symlinkSync(join(account, ".config"), join(scratch, "account-config-link"));
+  const own = (dir: string, home: string | undefined = account) => isAccountConfigDir(dir, "linux", home);
+  assert.equal(own(join(account, ".config", "second-read")), true);
+  assert.equal(own(join(scratch, "account-config-link", "second-read")), true);
+  assert.equal(own(join(scratch, "other", ".config", "second-read")), false);
+  assert.equal(own(join(account, "second-read")), false);
+  // With no account home, or a relative one, no folder is the account's.
+  assert.equal(isAccountConfigDir(join(account, ".config", "second-read"), "linux", undefined), false);
+  assert.equal(own(".config/second-read", "."), false);
+  assert.equal(isAccountConfigDir(join(account, "AppData", "Roaming", "second-read"), "win32", account), true);
+});
+
+test("insideRepository finds a folder in any repository's work tree or .git, through links", () => {
+  const repo = join(scratch, "inside", "repo");
+  mkdirSync(join(repo, ".git"), { recursive: true });
+  mkdirSync(join(repo, "src", "deep"), { recursive: true });
+  mkdirSync(join(scratch, "inside", "outside"), { recursive: true });
+  symlinkSync(join(repo, "src"), join(scratch, "inside", "link-in"));
+  symlinkSync(join(scratch, "inside", "outside"), join(repo, "link-out"));
+  const inside = [repo, join(repo, "cfg"), join(repo, "..cfg"), join(repo, ".git", "cfg"), join(repo, "src", "deep")];
+  // The repository is named by its real path.
+  for (const dir of [...inside, join(scratch, "inside", "link-in", "x"), join(repo, "missing", "deeper")]) {
+    assert.equal(insideRepository(dir), realpathSync(repo), dir);
+  }
+  // A folder named like the repository, or one a link in the repository points out to, isn't in it.
+  for (const dir of [join(scratch, "inside", "repo-other"), join(scratch, "inside", "outside"), join(repo, "link-out")]) {
+    assert.equal(insideRepository(dir), undefined, dir);
+  }
+  // A linked worktree or a submodule has a .git file, not a folder.
+  const worktree = join(scratch, "inside", "worktree");
+  mkdirSync(worktree, { recursive: true });
+  writeFileSync(join(worktree, ".git"), `gitdir: ${join(repo, ".git", "worktrees", "w")}\n`);
+  assert.equal(insideRepository(join(worktree, "cfg")), realpathSync(worktree));
 });
 
 test("the plugin's config_dir option is an absolute folder, ~ for the home folder, or unset when blank", () => {
