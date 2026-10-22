@@ -112,8 +112,9 @@ What the guards can't see: an agent that posts through its own GitHub tool, or t
     characters, and each text the call posts apart from file contents, which are code. Both are given as JSON, as
     data. A user-role entry marked as something else isn't a typed turn: a skill's text or a hook's output
     (`isMeta`, `turnCompanion`, `sourceToolUseID`), a tool's result, a subagent's prompt, and a message from another
-    session (`origin.kind` or `turnOrigin` of `peer`). Any other user entry counts as typed, so a marker the format
-    renames leaves the check stricter, not off.
+    session (`origin.kind` or `turnOrigin` of `peer`). An entry also marked as typed (`human`, or a `promptSource`
+    of `typed`) counts despite a skill's marker. Any other user entry counts as typed, so a marker the format renames
+    leaves the check stricter, not off.
   - **No typed turn:** a session that only other sessions direct has nothing private to carry, so its posts go on
     without the model. The word check still runs. A message from another session that quotes the user is the
     sending session's to check.

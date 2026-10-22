@@ -58,6 +58,13 @@ test("a skill's text, a hook's output and another session's message aren't user 
   for (const [what, entry] of Object.entries(NOT_TYPED)) {
     assert.deepEqual(userTurns(`${transcript([])}${JSON.stringify(entry)}\n`), [], what);
   }
+  // An entry that says it was typed counts, even with a skill's marker on it.
+  for (const typed of [{ origin: { kind: "human" } }, { turnOrigin: "human" }, { promptSource: "typed" }]) {
+    for (const marker of [{ turnCompanion: true }, { sourceToolUseID: "toolu_example" }]) {
+      const entry = { type: "user", ...typed, ...marker, message: { content: "Typed while busy" } };
+      assert.deepEqual(userTurns(`${JSON.stringify(entry)}\n`), ["Typed while busy"], JSON.stringify(entry));
+    }
+  }
   // Nor is a hook's output kept as an attachment.
   const attachment = { type: "attachment", attachment: { type: "hook_success", content: "A hook ran" } };
   assert.deepEqual(userTurns(`${JSON.stringify(attachment)}\n`), []);

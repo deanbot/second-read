@@ -108,13 +108,14 @@ export function userTurns(transcript: string): string[] | undefined {
     }
     if (entry === null || typeof entry !== "object" || typeof (entry as { type?: unknown }).type !== "string") continue;
     readable = true;
-    const { type, isMeta, isSidechain, turnCompanion, sourceToolUseID, origin, turnOrigin, message } = entry as Record<
-      string,
-      unknown
-    >;
-    if (type !== "user" || isMeta === true || isSidechain === true || turnCompanion === true) continue;
-    if (sourceToolUseID !== undefined) continue;
-    if ((origin as { kind?: unknown } | undefined)?.kind === "peer" || turnOrigin === "peer") continue;
+    const { type, isMeta, isSidechain, turnCompanion, sourceToolUseID, origin, turnOrigin, promptSource, message } =
+      entry as Record<string, unknown>;
+    if (type !== "user" || isMeta === true || isSidechain === true) continue;
+    const kind = (origin as { kind?: unknown } | undefined)?.kind;
+    if (kind === "peer" || turnOrigin === "peer") continue;
+    // A skill's markers, unless the entry also says it was typed: the stricter reading wins.
+    const typed = kind === "human" || turnOrigin === "human" || promptSource === "typed";
+    if (!typed && (turnCompanion === true || sourceToolUseID !== undefined)) continue;
     const content = (message as { content?: unknown } | undefined)?.content;
     let text: string | undefined;
     if (typeof content === "string") text = content;
