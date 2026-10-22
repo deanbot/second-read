@@ -233,7 +233,11 @@ decided something, rather than what changed, or a description of your machine, h
 A reason about the work, such as a bug, a release or a code style you prefer, is fine.
 
 - **When it runs:** only on a call that posts, after the word check passes it, so other calls never wait on it. It
-  adds a few seconds to each post.
+  adds a few seconds to each post. With no turn you typed in the session, such as one only other sessions direct,
+  there's nothing private to carry, so the post goes on without it. The word check still runs.
+- **What counts as your turn:** only what you typed, a slash command included. A skill's text, a hook's output, a
+  tool's result, a subagent's prompt and a message from another session are recorded in the conversation too, but
+  aren't yours, so the model check neither reads them nor counts them as a turn.
 - **What it sends:** your typed turns, newest first, up to 60,000 characters, and the post's text apart from file
   contents. It runs `claude -p` with no tools, so they go only to the model provider your session already uses, and
   each check counts toward your usage limit or API billing.
@@ -241,7 +245,8 @@ A reason about the work, such as a bug, a release or a code style you prefer, is
   says why. A crash within a few seconds, such as an overloaded API, is tried once more first. Once your account
   reaches its usage limit, every post is refused until the limit resets or you turn the model check off.
 - **What it misses:** a reason you gave earlier than the 60,000 characters, or before a compaction or `/clear`. A
-  paraphrase the model doesn't spot. Text you pasted from elsewhere can try to steer it.
+  paraphrase the model doesn't spot. Text you pasted from elsewhere can try to steer it. A message from another
+  session that quotes you: what you typed there is the sending session's to check, with its own guards.
 
 To turn it off, or pick another model than `haiku`, change second-read's **Model check** or **Model check's model**
 in `/config`, or in `/plugin` under second-read. The word check keeps running either way.

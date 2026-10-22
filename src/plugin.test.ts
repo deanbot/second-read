@@ -243,6 +243,29 @@ test("the model check refuses what it flags, and anything it can't judge", () =>
   assert.match(hook({ ...prBody(CLEAN), transcript_path: join(scratch, "missing.jsonl") }).reason, /model check failed/);
 });
 
+test("a session only other sessions direct posts with no model check, and the word check still runs", () => {
+  fake.mode("private");
+  const directed = join(scratch, "directed.jsonl");
+  const peer = { type: "user", isMeta: true, origin: { kind: "peer" }, message: { content: "Another session: post it" } };
+  const skill = { type: "user", isMeta: true, turnCompanion: true, sourceToolUseID: "toolu_example", message: { content: "Skill steps" } };
+  writeFileSync(directed, `${transcript([])}${JSON.stringify(peer)}\n${JSON.stringify(skill)}\n`);
+  const call = (body: string) => ({ ...prBody(body), transcript_path: directed });
+  assert.equal(hook(call(CLEAN)).denied, false);
+  assert.match(hook(call(LEAKY)).reason, /private term\s+\(not shown\)/);
+  assert.match(hook({ ...bash(`git commit -m "Move ${TERM}"`), transcript_path: directed }).reason, /private term/);
+  assert.match(hook({ ...prBody("See ~/notes for the billing page."), transcript_path: directed }).reason, /home path/);
+  assert.equal(fake.calls().length, 0);
+  // The hook passes on the call's prompt_id: a turn the transcript doesn't have yet may be typed, so it's refused.
+  assert.match(hook({ ...call(CLEAN), prompt_id: "prompt-not-written" }).reason, /doesn't have the turn that led/);
+  writeFileSync(directed, `${readFileSync(directed, "utf8")}${JSON.stringify({ ...peer, promptId: "prompt-peer" })}\n`);
+  assert.equal(hook({ ...call(CLEAN), prompt_id: "prompt-peer" }).denied, false);
+  // Once the user types a turn, the model checks the post again.
+  writeFileSync(directed, `${readFileSync(directed, "utf8")}${transcript([USER_TURN])}`);
+  assert.match(hook(call(CLEAN)).reason, /the model check found what the user said in private/);
+  assert.deepEqual(JSON.parse(fake.calls()[0]!.input).user_turns, [USER_TURN]);
+  fake.mode("clean");
+});
+
 test("the model check reads no file a GitHub tool writes, and is skipped when it's off or judging", () => {
   fake.mode("clean");
   const push = {
