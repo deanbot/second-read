@@ -109,6 +109,16 @@ export function pluginConfigDir(env: NodeJS.ProcessEnv, home: string): string | 
   return value ? absoluteDir(value, home, "second-read's config_dir option") : undefined;
 }
 
+// The git hooks' and the gh shim's own config folder, which `second-read check` and the plugin never read. It lets
+// the guards check against the user's terms in a session whose commands read an empty SECOND_READ_CONFIG_DIR.
+// Unset or blank, the guards find the config as everything else does.
+export const GUARD_CONFIG_DIR = "SECOND_READ_GUARD_CONFIG_DIR";
+
+export function guardConfigDir(env: NodeJS.ProcessEnv, home: string): string | undefined {
+  const value = env[GUARD_CONFIG_DIR]?.trim();
+  return value ? absoluteDir(value, home, GUARD_CONFIG_DIR) : undefined;
+}
+
 // A missing user file means no private terms yet, not a failure: the other checks still run.
 export function loadUserConfig(path: string): UserConfig {
   if (!existsSync(path)) return { terms: [], allowedWords: [], allowedEmails: [], allowedPaths: [], allowedNames: [] };

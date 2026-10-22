@@ -50,7 +50,8 @@ So the check has to run **before** a post goes out, and it can't rely on the per
   - every term on the user's list, matched case-insensitively at word boundaries, after Unicode normalisation.
 - **Configuration:**
   - the user's file in the platform's config folder (`~/.config/second-read/` where there is no other convention),
-    or in the folder `SECOND_READ_CONFIG_DIR` names: private terms, allowed emails, allowed paths, allowed account
+    or in the folder `SECOND_READ_CONFIG_DIR` names (the guards and the plugin can each be given another, sections 4
+    and 5): private terms, allowed emails, allowed paths, allowed account
     and machine names. A repository's own settings can set that variable, and the ones that choose the platform's
     folder (`XDG_CONFIG_HOME`, `APPDATA`, `HOME`), since Claude Code's checked-in project settings can set any but
     a few named variables. So whichever variable chose it, the folder must be absolute, outside every git
@@ -90,6 +91,16 @@ So the check has to run **before** a post goes out, and it can't rely on the per
   may not be there until the command runs. An edit checks only the new name, so a leaked one can be renamed away.
   Grouped short flags are read as gh reads them, from each command's flags that take a value.
   Every other command passes straight through.
+
+- **Their own config folder:** `SECOND_READ_GUARD_CONFIG_DIR` points the git hooks and the shim at a config folder
+  that `check` and the plugin never read. It's for a session whose commands read a `SECOND_READ_CONFIG_DIR` with no
+  terms: the guards run there too, and would otherwise check its pushes by patterns only. It's a variable, so the
+  session's commands see it, but it names a folder, not the terms, which an empty `SECOND_READ_CONFIG_DIR` only keeps
+  out of what second-read prints. A repository's settings can set it, so it has `SECOND_READ_CONFIG_DIR`'s rules
+  (section 3), and a missing `config.toml` refuses even in the account's default folder. While it's set, a guard's
+  output goes into the session, so it names no private term: a term's finding gives its line, column and rule, and a
+  term anywhere else, an error included, is masked, as in the plugin's deny reasons (section 5). Unset, a guard
+  prints what it found, for the person at the terminal.
 
 These catch every agent that posts through `git` and `gh`, and the user too.
 

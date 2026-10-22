@@ -20,6 +20,8 @@ import {
   insideRepository,
   isAccountConfigDir,
   findRepoConfig,
+  GUARD_CONFIG_DIR,
+  guardConfigDir,
   loadRepoConfig,
   loadUserConfig,
   mergeRules,
@@ -144,22 +146,29 @@ function parseCheckArgs(args: string[]): { kind?: Kind } {
   return kind === undefined ? {} : { kind };
 }
 
-// Your config and the repository's allowlist, from the repository at `cwd`: the one being posted to. The plugin's
-// config_dir option names your config file on purpose, so there a missing one is a mistake, and the check fails
-// rather than go on without your terms.
+// A config file named on purpose, by the plugin's config_dir option or SECOND_READ_GUARD_CONFIG_DIR: what names
+// it, and how to clear that.
+interface ChosenFile {
+  path: string;
+  setting: string;
+  clear: string;
+}
+
+// Your config and the repository's allowlist, from the repository at `cwd`: the one being posted to. A config file
+// named on purpose that's missing is a mistake, so the check fails rather than go on without your terms.
 function loadRules(
   io: Io,
   cwd = io.cwd,
-  userFile?: string,
+  userFile?: ChosenFile,
 ): { identity: Identity; rules: Rules; exemptFiles: string[] } {
   const identity = io.identity();
-  if (userFile !== undefined && !existsSync(userFile)) {
+  if (userFile !== undefined && !existsSync(userFile.path)) {
     throw new Error(
-      `second-read's config_dir option is ${dirname(userFile)}, which has no ${USER_FILE}. Put one there, or ` +
-        `clear the option in /config or /plugin, so the check can read your private terms`,
+      `${userFile.setting} is ${dirname(userFile.path)}, which has no ${USER_FILE}. Put one there, or ` +
+        `${userFile.clear}, so the check can read your private terms`,
     );
   }
-  const user = loadUserConfig(userFile ?? defaultUserFile(io));
+  const user = loadUserConfig(userFile?.path ?? defaultUserFile(io));
   const repoPath = findRepoConfig(cwd);
   const repo = repoPath === undefined ? undefined : loadRepoConfig(repoPath, user.terms);
   return { identity, rules: mergeRules(user, repo), exemptFiles: repo?.exemptFiles ?? [] };
@@ -250,13 +259,24 @@ async function runHook(io: Io, args: string[]): Promise<number> {
   if (hookPath === undefined || !(HOOKS as readonly string[]).includes(name!)) {
     throw new UsageError(`hook is run by the git hooks that "second-read hooks install" adds`);
   }
-  const { identity, rules, exemptFiles } = loadRules(io);
+  const guard = guardOutput(io);
+  return guarded(guard, () => checkHook(guardIo(io, guard), guard, name as HookName, hookPath, gitArgs));
+}
+
+async function checkHook(
+  io: Io,
+  guard: GuardOutput,
+  name: HookName,
+  hookPath: string,
+  gitArgs: string[],
+): Promise<number> {
+  const { identity, rules, exemptFiles } = loadRules(io, io.cwd, guard.file);
   const exempt = exemptMatcher(exemptFiles);
   let input: Buffer | undefined;
   let sections: Section[];
   let changes: AllowlistChange[] = [];
   const found: PushFound = { commits: 0, tags: new Set(), tagNames: new Set(), names: [] };
-  if ((name as HookName) === "commit-msg") {
+  if (name === "commit-msg") {
     const file = gitArgs[0];
     if (file === undefined) throw new Error("commit-msg was given no message file");
     const message = commitMessage(readFileSync(resolve(io.cwd, file), "utf8"), io.cwd, io.env);
@@ -298,11 +318,68 @@ async function runHook(io: Io, args: string[]): Promise<number> {
   }
   sections = sections.filter((s) => s.findings.length > 0);
   if (sections.length > 0) {
-    io.err(report(sections, name === "commit-msg" ? FIX_TEXT : pushFix(found)));
+    io.err(guardReport(sections, name === "commit-msg" ? FIX_TEXT : pushFix(found), guard));
   }
   if (changes.length > 0) io.err(allowlistReport(changes));
   if (sections.length > 0 || changes.length > 0) return EXIT.findings;
   return runPrevious(resolve(io.cwd, hookPath), gitArgs, io.cwd, io.env, input);
+}
+
+// The guards' own config, when SECOND_READ_GUARD_CONFIG_DIR names a folder, and the terms read from it. The guard
+// then runs in a session whose commands read an empty SECOND_READ_CONFIG_DIR, to keep your terms out of what it
+// sees, so nothing the guard prints names one: a term's finding gives its line, column and rule, and a term anywhere
+// else, in a branch, a file's name or an error, is masked, as the plugin's deny reasons are. Unset, a guard prints
+// what it found, for the person at the terminal.
+interface GuardOutput {
+  file: ChosenFile | undefined;
+  terms: string[];
+}
+
+function guardOutput(io: Io): GuardOutput {
+  const dir = guardConfigDir(io.env, io.identity().home);
+  if (dir === undefined) return { file: undefined, terms: [] };
+  // A repository's own settings can set the variable too, so it gets the rules SECOND_READ_CONFIG_DIR has.
+  const top = isAccountConfigDir(dir, io.platform, io.accountHome()) ? undefined : insideRepository(dir);
+  if (top !== undefined) {
+    throw new Error(
+      `${GUARD_CONFIG_DIR} is ${dir}, inside the repository at ${top}. A repository's own settings can set it, so it ` +
+        `can't name a folder in a repository; point it outside every repository, or unset it`,
+    );
+  }
+  return { file: { path: join(dir, USER_FILE), setting: GUARD_CONFIG_DIR, clear: "unset it" }, terms: [] };
+}
+
+function guardMask(guard: GuardOutput, text: string): string {
+  return guard.file === undefined ? text : maskTerms(text, guard.terms);
+}
+
+function guardIo(io: Io, guard: GuardOutput): Io {
+  return { ...io, err: (text) => io.err(guardMask(guard, text)) };
+}
+
+// A value is masked before it's quoted: quoting escapes a newline or a backslash, which would keep a term in it
+// from being found afterwards.
+function guardReport(sections: Section[], fix: string, guard: GuardOutput): string {
+  if (guard.file === undefined) return report(sections, fix);
+  return report(sections, fix, { hideTerms: true, quote: (text) => JSON.stringify(guardMask(guard, text)) });
+}
+
+// An error can name a path, a branch or a file too, so the terms are read first, before the repository's allowlist
+// or git can fail. One that comes before them is about reading them, and loadRules gives it.
+async function guarded(guard: GuardOutput, run: () => Promise<number>): Promise<number> {
+  if (guard.file !== undefined && existsSync(guard.file.path)) {
+    try {
+      guard.terms = loadUserConfig(guard.file.path).terms;
+    } catch {
+      // loadRules fails with the same error.
+    }
+  }
+  try {
+    return await run();
+  } catch (e) {
+    if (guard.file === undefined) throw e;
+    throw new Error(guardMask(guard, e instanceof Error ? e.message : String(e)));
+  }
 }
 
 // Names the versions of .second-read.toml someone has read, by blob id, and the commits that delete one, so a
@@ -431,9 +508,21 @@ async function runShim(io: Io, args: string[]): Promise<number> {
     throw new UsageError(`gh-shim is run by the gh shim that "second-read shim install" writes`);
   }
   const post = parseGh(ghArgs);
+  // Only a command that posts reads the config, so a mistake in it stops nothing else.
+  const guard = post ? guardOutput(io) : { file: undefined, terms: [] };
+  return guarded(guard, () => checkShim(guardIo(io, guard), guard, shimPath, ghArgs, post));
+}
+
+async function checkShim(
+  io: Io,
+  guard: GuardOutput,
+  shimPath: string,
+  ghArgs: string[],
+  post: ReturnType<typeof parseGh>,
+): Promise<number> {
   let input: Buffer | undefined;
   if (post) {
-    const { identity, rules } = loadRules(io);
+    const { identity, rules } = loadRules(io, io.cwd, guard.file);
     if (post.bodyFiles.includes("-") && !(post.stdinIfPiped && io.stdinIsTTY)) input = await io.readStdin();
     const stdin = input?.toString("utf8") ?? "";
     const texts = postTexts(post, (file) => (file === "-" ? stdin : readFileSync(resolve(io.cwd, file), "utf8")));
@@ -445,7 +534,7 @@ async function runShim(io: Io, args: string[]): Promise<number> {
       ...texts.map(([where, text]) => ({ where, findings: check(text, { identity, rules, kind: post.kind }) })),
     ].filter((s) => s.findings.length > 0);
     if (sections.length > 0) {
-      io.err(report(sections, FIX_TEXT));
+      io.err(guardReport(sections, FIX_TEXT, guard));
       return EXIT.findings;
     }
   }
@@ -484,7 +573,7 @@ async function runClaudeHook(io: Io): Promise<number> {
   if (reason !== undefined) {
     try {
       if (userFile instanceof Error) throw userFile;
-      reason = maskTerms(reason, loadUserConfig(userFile ?? defaultUserFile(io)).terms);
+      reason = maskTerms(reason, loadUserConfig(userFile?.path ?? defaultUserFile(io)).terms);
     } catch (e) {
       // Without the terms the reason can't be masked, so it's replaced by why they couldn't be read.
       reason = failed(e);
@@ -540,16 +629,18 @@ function shellQuote(text: string): string {
 
 // The config file the plugin's config_dir option names, if it's set. An option that can't be read is kept as the
 // error, so it stops only the calls that post.
-function claudeUserFile(io: Io): string | Error | undefined {
+function claudeUserFile(io: Io): ChosenFile | Error | undefined {
   try {
     const dir = pluginConfigDir(io.env, io.identity().home);
-    return dir === undefined ? undefined : join(dir, USER_FILE);
+    if (dir === undefined) return undefined;
+    const setting = "second-read's config_dir option";
+    return { path: join(dir, USER_FILE), setting, clear: "clear the option in /config or /plugin" };
   } catch (e) {
     return e instanceof Error ? e : new Error(String(e));
   }
 }
 
-function claudeRefusal(io: Io, call: unknown, userFile: string | Error | undefined): string | undefined {
+function claudeRefusal(io: Io, call: unknown, userFile: ChosenFile | Error | undefined): string | undefined {
   if (call === null || typeof call !== "object") throw new Error("the hook was given no tool call");
   const { tool_name: tool, tool_input: input, cwd: callCwd } = call as Record<string, unknown>;
   const cwd = typeof callCwd === "string" ? callCwd : io.cwd;
