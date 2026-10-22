@@ -32,6 +32,8 @@ out. [PLAN.md](./PLAN.md) is the design source of truth. Read the section an iss
   Markdown files only skips the tests. `npm run eval:judge` calls a model and stays out of CI.
 - The check to require before merge is `tests`. It passes when the tests passed on both Node versions, or when they
   were skipped for a Markdown-only change.
+- PRs must be up to date with `main` before merge, so the head CI tested is what merges. Bring one up to date by
+  merging `main` into it, never by rebasing.
 - To switch CI off, set the repository variable `CI_ENABLED` to `false`, in any case (Settings → Secrets and
   variables → Actions → Variables). To switch it back on, delete the variable or set it to anything else; unset
   means on.
