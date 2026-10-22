@@ -234,8 +234,8 @@ option, `config_dir`, in `/config` or in `/plugin` under second-read:
 
 That's the entry it writes to your user settings. Claude Code gives the option only to the plugin's hooks: commands
 Claude runs never see it, and `second-read check` keeps reading `SECOND_READ_CONFIG_DIR`. It reads plugin options
-only from your user settings and managed settings, so a repository can't set it. Set, it wins over
-`SECOND_READ_CONFIG_DIR` for the hooks. Left empty, the hooks find your config as everything else does.
+only from your user settings, a `--settings` file and managed settings, so a repository can't set it. Set, it wins
+over `SECOND_READ_CONFIG_DIR` for the hooks. Left empty, the hooks find your config as everything else does.
 
 The folder has to hold a `config.toml`, and the path has to be absolute or start with `~`. If either is wrong,
 every post is refused until it's fixed, since the hooks would otherwise go on without your terms. Calls that

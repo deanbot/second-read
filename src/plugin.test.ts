@@ -268,6 +268,10 @@ test("the plugin's options and the hook's timeout leave the model check room to 
   assert.equal(plugin.userConfig.model_check.type, "boolean");
   assert.equal(plugin.userConfig.model_check.default, true);
   assert.equal(plugin.userConfig.model.default, "haiku");
+  // A string, which every Claude Code the plugin supports takes: an option type it doesn't know keeps the plugin, and
+  // so every check, from loading. No default, so unset finds the config as everything else does.
+  assert.equal(plugin.userConfig.config_dir.type, "string");
+  assert.equal(Object.hasOwn(plugin.userConfig.config_dir, "default"), false);
   const hooks = JSON.parse(readFileSync(join(root, "adapters", "claude-code", "hooks.json"), "utf8"));
   // The judge is killed at 90 seconds, so its own reason is given before the hook times out.
   assert.ok(hooks.hooks.PreToolUse[0].hooks[0].timeout > 90);

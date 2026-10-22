@@ -289,6 +289,8 @@ test("maskTerms hides each private term however it's written, and leaves the res
   );
   const near = "example-private-projects and an example project";
   assert.equal(maskTerms(near, terms), near);
+  // Terms that overlap without one holding the other are masked as one.
+  assert.equal(maskTerms("in example-private-project.", ["example-private", "private-project"]), `in ${MASKED_TERM}.`);
   assert.equal(maskTerms("Saved to ~/notes", []), "Saved to ~/notes");
 });
 

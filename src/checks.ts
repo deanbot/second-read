@@ -260,10 +260,15 @@ export const MASKED_TERM = "[private term]";
 // The text with every private term in it replaced, matched as the check matches them. It's for what second-read
 // itself prints into an agent's session, never for the text being checked.
 export function maskTerms(input: string, terms: string[]): string {
-  let out = input;
-  for (const s of outermost(termSpans(fold(input), terms)).reverse()) {
-    out = out.slice(0, s.start) + MASKED_TERM + out.slice(s.end);
+  // Terms that overlap are masked as one, so no part of either is left between two masks.
+  const merged: [number, number][] = [];
+  for (const { start, end } of termSpans(fold(input), terms).sort((a, b) => a.start - b.start)) {
+    const last = merged.at(-1);
+    if (last && start < last[1]) last[1] = Math.max(last[1], end);
+    else merged.push([start, end]);
   }
+  let out = input;
+  for (const [start, end] of merged.reverse()) out = out.slice(0, start) + MASKED_TERM + out.slice(end);
   return out;
 }
 
