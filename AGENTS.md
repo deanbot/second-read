@@ -28,12 +28,14 @@ out. [PLAN.md](./PLAN.md) is the design source of truth. Read the section an iss
 ## CI
 
 - CI (`.github/workflows/ci.yml`) runs `npm ci` and `npm test` on every pull request and every push to `main`, on
-  Node 22 and Node 24. A change to Markdown files only skips the tests. `npm run eval:judge` calls a model and
-  stays out of CI. (Probe: a Markdown-only change, retargeted; this PR is closed unmerged.)
+  Node 22 and Node 24. It tests a pull request's head commit, not GitHub's merge with the base. A change to
+  Markdown files only skips the tests. `npm run eval:judge` calls a model and stays out of CI. (Probe: a
+  Markdown-only change, retargeted; this PR is closed unmerged.)
 - The check to require before merge is `tests`. It passes when the tests passed on both Node versions, or when they
   were skipped for a Markdown-only change.
-- To switch CI off, set the repository variable `CI_ENABLED` to `false`, in any case (Settings → Secrets and variables →
-  Actions → Variables). To switch it back on, delete the variable or set it to anything else; unset means on.
+- To switch CI off, set the repository variable `CI_ENABLED` to `false`, in any case (Settings → Secrets and
+  variables → Actions → Variables). To switch it back on, delete the variable or set it to anything else; unset
+  means on.
 - While it's off, no tests run and the `tests` check fails, so nothing merges untested. A skipped job would count
   as passing, which is why it fails instead. To merge then, either switch CI back on and push a new commit (or close
   and reopen the PR) so CI runs again, or run `npm test` on the PR's head yourself and merge through the ruleset's

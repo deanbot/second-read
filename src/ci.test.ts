@@ -119,23 +119,45 @@ test("anything it can't tell runs the tests", () => {
   assert.ok(!existsSync(join(dir, "x.md")), "an option as the base is read as a commit, not obeyed");
 });
 
-test("a pull request's merge commit is checked against its first parent", () => {
+test("a Markdown-only branch stacked on a code branch needs the tests against main", () => {
+  const { dir, base: main } = repo();
+  git(dir, "switch", "-q", "-c", "feature");
+  write(dir, "src/main.ts");
+  const feature = commit(dir);
+  git(dir, "switch", "-q", "-c", "docs");
+  write(dir, "README.md");
+  const docs = commit(dir);
+  assert.equal(changed(dir, feature, docs), "tests=false\n", "docs into feature");
+  // Retargeted to main before feature merges, it would bring feature's code with it.
+  assert.equal(changed(dir, main, docs), "tests=true\n", "docs into main");
+});
+
+test("code that reached the base after a branch left it isn't the branch's change", () => {
   const { dir } = repo();
   git(dir, "switch", "-q", "-c", "docs");
   write(dir, "README.md");
-  commit(dir);
+  const docs = commit(dir);
   git(dir, "switch", "-q", "main");
   write(dir, "src/main.ts");
-  commit(dir);
-  git(dir, "merge", "-q", "--no-ff", "-m", "Merge", "docs");
-  // The code change came in on main, so the pull request itself changes only Markdown.
-  assert.equal(changed(dir, "HEAD^1", "HEAD"), "tests=false\n");
+  const main = commit(dir);
+  assert.equal(changed(dir, main, docs), "tests=false\n");
 });
 
+const workflow = readFileSync(fileURLToPath(new URL("../.github/workflows/ci.yml", import.meta.url)), "utf8");
+
 test("CI runs again when a pull request's base branch changes", () => {
-  // A Markdown-only pull request stacked on a code branch, retargeted to main, merges that code untested unless
-  // the retarget (an `edited` event) runs CI again.
-  const workflow = readFileSync(fileURLToPath(new URL("../.github/workflows/ci.yml", import.meta.url)), "utf8");
+  // A retarget is an `edited` event; without it, the green run against the old base would still count.
   const types = /^  pull_request:\n(?:    #.*\n)*    types: \[([^\]]*)\]$/m.exec(workflow)?.[1]?.split(/,\s*/);
   assert.deepEqual(types?.sort(), ["edited", "opened", "reopened", "synchronize"]);
+});
+
+test("CI checks and tests the pull request's head against the event's base, not GitHub's merge commit", () => {
+  // The merge commit isn't remade when the base branch changes, so a retargeted pull request would still be
+  // checked and tested against its old base.
+  const checkouts = workflow.match(/uses: actions\/checkout@.*\n\s+with:\n(?:\s+\w[\w-]*:.*\n)*/g) ?? [];
+  assert.equal(checkouts.length, 2);
+  const head = /ref: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/;
+  for (const step of checkouts) assert.match(step, head);
+  assert.match(workflow, /BASE: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.before \}\}/);
+  assert.match(workflow, /changed\.mjs "\$BASE" "\$HEAD_SHA"/);
 });
