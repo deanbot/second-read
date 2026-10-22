@@ -4,7 +4,10 @@
 name: CI
 
 on:
+  # `edited` includes a change of base branch, which changes what a pull request merges without a new push. It
+  # also fires on title and body edits; the workflow reads neither.
   pull_request:
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 

@@ -1,7 +1,7 @@
 // Runs CI's change check (.github/scripts/changed.mjs) in scratch repositories, as the workflow runs it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -130,4 +130,12 @@ test("a pull request's merge commit is checked against its first parent", () => 
   git(dir, "merge", "-q", "--no-ff", "-m", "Merge", "docs");
   // The code change came in on main, so the pull request itself changes only Markdown.
   assert.equal(changed(dir, "HEAD^1", "HEAD"), "tests=false\n");
+});
+
+test("CI runs again when a pull request's base branch changes", () => {
+  // A Markdown-only pull request stacked on a code branch, retargeted to main, merges that code untested unless
+  // the retarget (an `edited` event) runs CI again.
+  const workflow = readFileSync(fileURLToPath(new URL("../.github/workflows/ci.yml", import.meta.url)), "utf8");
+  const types = /^  pull_request:\n(?:    #.*\n)*    types: \[([^\]]*)\]$/m.exec(workflow)?.[1]?.split(/,\s*/);
+  assert.deepEqual(types?.sort(), ["edited", "opened", "reopened", "synchronize"]);
 });
