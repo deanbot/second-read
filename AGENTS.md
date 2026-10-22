@@ -34,6 +34,8 @@ out. [PLAN.md](./PLAN.md) is the design source of truth. Read the section an iss
   were skipped for a Markdown-only change.
 - PRs must be up to date with `main` before merge, so the head CI tested is what merges. Bring one up to date by
   merging `main` into it, never by rebasing.
+- After changing a PR's base branch, wait for the new CI run's `tests` before merging. Until it reports, the head
+  still shows the green `tests` from the run against the old base.
 - To switch CI off, set the repository variable `CI_ENABLED` to `false`, in any case (Settings → Secrets and
   variables → Actions → Variables). To switch it back on, delete the variable or set it to anything else; unset
   means on.
