@@ -592,7 +592,13 @@ function claudeRefusal(io: Io, call: unknown, userFile: string | Error | undefin
   const prose = posts.filter((p) => p.file === undefined).map(({ where, text }) => ({ where, text }));
   const { on, model } = modelCheck(io.env);
   if (!on || prose.length === 0 || io.env[JUDGING]) return undefined;
-  return judgeRefusal(prose, (call as Record<string, unknown>).transcript_path, { env: io.env, model, quote });
+  const { transcript_path: transcriptPath, prompt_id: promptId } = call as Record<string, unknown>;
+  return judgeRefusal(prose, transcriptPath, {
+    env: io.env,
+    model,
+    quote,
+    ...(typeof promptId === "string" ? { promptId } : {}),
+  });
 }
 
 function runInit(io: Io): number {

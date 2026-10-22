@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -32,7 +32,56 @@ test("only what the user typed is read from a transcript", () => {
   lines.push(JSON.stringify({ type: "user", isSidechain: true, message: { content: "A subagent's prompt" } }));
   lines.push(JSON.stringify({ type: "user", message: { content: [{ type: "text", text: "Pasted" }, { type: "image" }] } }));
   lines.push("{ not json");
-  assert.deepEqual(userTurns(lines.join("\n")), ["Hello.", TURN, "Pasted"]);
+  // An entry that says it was typed counts, and so does a slash command the user typed.
+  lines.push(JSON.stringify({ type: "user", origin: { kind: "human" }, turnOrigin: "human", message: { content: "Typed" } }));
+  lines.push(JSON.stringify({ type: "user", message: { content: "<command-name>/example-skill</command-name>" } }));
+  assert.deepEqual(userTurns(lines.join("\n"))?.typed, [
+    "Hello.",
+    TURN,
+    "Pasted",
+    "Typed",
+    "<command-name>/example-skill</command-name>",
+  ]);
+});
+
+// What Claude Code records with the user's role that the user didn't type, each with only the one marker that
+// shows it, so each is skipped on its own.
+const NOT_TYPED = {
+  "a skill's text": { type: "user", turnCompanion: true, message: { content: [{ type: "text", text: "Base folder for this skill" }] } },
+  "a skill's text, from its tool call": { type: "user", sourceToolUseID: "toolu_example", message: { content: "Skill steps" } },
+  "a hook's output": { type: "user", isMeta: true, message: { content: "A hook added this context" } },
+  "another session's message": { type: "user", origin: { kind: "peer" }, message: { content: "Another session says hi" } },
+  "another session's message, by turn": { type: "user", turnOrigin: "peer", message: { content: "Another session again" } },
+};
+
+test("a skill's text, a hook's output and another session's message aren't user turns", () => {
+  for (const [what, entry] of Object.entries(NOT_TYPED)) {
+    assert.deepEqual(userTurns(`${transcript([])}${JSON.stringify(entry)}\n`)?.typed, [], what);
+  }
+  // An entry that says it was typed counts, even with a skill's marker on it.
+  for (const typed of [{ origin: { kind: "human" } }, { turnOrigin: "human" }, { promptSource: "typed" }]) {
+    for (const marker of [{ turnCompanion: true }, { sourceToolUseID: "toolu_example" }]) {
+      const entry = { type: "user", ...typed, ...marker, message: { content: "Typed while busy" } };
+      assert.deepEqual(userTurns(`${JSON.stringify(entry)}\n`)?.typed, ["Typed while busy"], JSON.stringify(entry));
+    }
+  }
+  // Nor does another session's marker beat one that says the entry was typed, and a null tool id is no skill's.
+  for (const entry of [
+    { type: "user", origin: { kind: "peer" }, promptSource: "typed", message: { content: "Typed" } },
+    { type: "user", origin: { kind: "human" }, turnOrigin: "peer", message: { content: "Typed" } },
+    { type: "user", sourceToolUseID: null, message: { content: "Typed" } },
+  ]) {
+    assert.deepEqual(userTurns(`${JSON.stringify(entry)}\n`)?.typed, ["Typed"], JSON.stringify(entry));
+  }
+  // Nor is a hook's output kept as an attachment.
+  const attachment = { type: "attachment", attachment: { type: "hook_success", content: "A hook ran" } };
+  assert.deepEqual(userTurns(`${JSON.stringify(attachment)}\n`)?.typed, []);
+});
+
+test("a transcript where no line reads as an entry is unreadable, not one with no turns", () => {
+  for (const text of ["", "\n\n", "{ not json\n", "[1, 2]\nnull\n\"text\"\n", '{"no_type": true}\n']) {
+    assert.equal(userTurns(text), undefined, JSON.stringify(text));
+  }
 });
 
 test("the newest turns are kept first, up to the cap", () => {
@@ -123,8 +172,73 @@ test("a call with no transcript, or none the check can read, is refused and says
     assert.match(reason, why);
     assert.match(reason, /model_check option in \/config/);
   }
-  const empty = join(scratch, "empty.jsonl");
-  writeFileSync(empty, transcript([]));
-  assert.match(judgeRefusal(texts, empty, options)!, /no user turn in the transcript/);
+  const unreadable = join(scratch, "unreadable.jsonl");
+  writeFileSync(unreadable, "{ not json\n");
+  assert.match(judgeRefusal(texts, unreadable, options)!, /no line of the transcript reads as an entry/);
   assert.equal(fake.calls().length, 0);
+});
+
+test("with no turn the user typed, there's nothing to check, so the post goes on without asking the model", () => {
+  fake.mode("private");
+  // A session only other sessions direct, having loaded a skill.
+  const directed = join(scratch, "directed.jsonl");
+  writeFileSync(directed, `${transcript([])}${Object.values(NOT_TYPED).map((e) => JSON.stringify(e)).join("\n")}\n`);
+  assert.equal(judgeRefusal(texts, directed, options), undefined);
+  assert.equal(fake.calls().length, 0);
+  // One typed turn among them, and the model checks the post again, given only that turn.
+  writeFileSync(directed, `${readFileSync(directed, "utf8")}${transcript([TURN])}`);
+  assert.match(judgeRefusal(texts, directed, options)!, /found what the user said in private/);
+  assert.deepEqual(JSON.parse(fake.calls()[0]!.input).user_turns, [TURN]);
+  fake.mode("clean");
+});
+
+test("with no typed turn read, a typed entry the check can't read, or no user entry at all, is refused", () => {
+  fake.mode("private");
+  const path = join(scratch, "unread.jsonl");
+  const peer = { type: "user", isMeta: true, origin: { kind: "peer" }, promptId: "p0", message: { content: "Post it" } };
+  const assistant = { type: "assistant", message: { content: [{ type: "text", text: "On it." }] } };
+  const write = (...entries: object[]) => writeFileSync(path, `${entries.map((e) => JSON.stringify(e)).join("\n")}\n`);
+  for (const content of [
+    { text: "We dropped it because of example-private-project." },
+    [{ type: "input_text", text: "We dropped it because of example-private-project." }],
+    [{ type: "image", source: { type: "base64", data: "" } }],
+    "  ",
+  ]) {
+    write(peer, { type: "user", promptId: "p1", message: { content } }, assistant);
+    for (const promptId of [undefined, "p1"]) {
+      const reason = judgeRefusal(texts, path, { ...options, ...(promptId ? { promptId } : {}) })!;
+      assert.match(reason, /a user turn the check can't read/, JSON.stringify(content));
+    }
+  }
+  // User entries under another type, so none is a user entry.
+  write({ type: "human", promptId: "p1", message: { content: "We dropped it." } }, assistant);
+  assert.match(judgeRefusal(texts, path, options)!, /no user entry/);
+  assert.equal(fake.calls().length, 0);
+  // Only another session's message, with or without its prompt_id, still goes on.
+  write(peer, assistant);
+  assert.equal(judgeRefusal(texts, path, options), undefined);
+  assert.equal(judgeRefusal(texts, path, { ...options, promptId: "p0" }), undefined);
+  assert.equal(fake.calls().length, 0);
+  fake.mode("clean");
+});
+
+test("with no typed turn, a call whose own turn the transcript doesn't have yet is refused, since that turn may be typed", () => {
+  fake.mode("private");
+  const path = join(scratch, "in-flight.jsonl");
+  const peer = { type: "user", isMeta: true, origin: { kind: "peer" }, promptId: "prompt-peer", message: { content: "Post it" } };
+  const attachment = { type: "attachment", promptId: "prompt-attached", attachment: { type: "hook_success" } };
+  writeFileSync(path, `${transcript([])}${JSON.stringify(peer)}\n${JSON.stringify(attachment)}\n`);
+  const refusal = (promptId?: string) => judgeRefusal(texts, path, { ...options, ...(promptId ? { promptId } : {}) });
+  // The call came from the other session's message, which is there.
+  assert.equal(refusal("prompt-peer"), undefined);
+  // An older Claude Code that sends no prompt_id can't tell, so the call goes on.
+  assert.equal(refusal(), undefined);
+  // A turn not written yet, or seen only on an entry that isn't the user's, is refused, and says to try again.
+  for (const promptId of ["prompt-typed", "prompt-attached"]) {
+    const reason = refusal(promptId)!;
+    assert.match(reason, /doesn't have the turn that led to this call yet, so try again/, promptId);
+    assert.match(reason, /model_check option/);
+  }
+  assert.equal(fake.calls().length, 0);
+  fake.mode("clean");
 });
