@@ -38,9 +38,8 @@ out. [PLAN.md](./PLAN.md) is the design source of truth. Read the section an iss
   variables → Actions → Variables). To switch it back on, delete the variable or set it to anything else; unset
   means on.
 - While it's off, no tests run and the `tests` check fails, so nothing merges untested. A skipped job would count
-  as passing, which is why it fails instead. To merge then, either switch CI back on and push a new commit (or close
-  and reopen the PR) so CI runs again, or run `npm test` on the PR's head yourself and merge through the ruleset's
-  bypass.
+  as passing, which is why it fails instead. The ruleset has no bypass, so nothing merges until CI is switched back
+  on and `tests` runs again: push a new commit, or close and reopen the PR.
 
 ## Workflow
 
