@@ -85,6 +85,8 @@ export interface JudgeOptions {
   env: NodeJS.ProcessEnv;
   model: string;
   timeoutMs?: number;
+  // How the refusal quotes what the post and the user said; the hook masks private terms before quoting.
+  quote?: (text: string) => string;
 }
 
 // What the user typed, oldest first, from a Claude Code transcript. Tool results, the text Claude Code adds itself
@@ -230,8 +232,9 @@ export function judgeRefusal(
   const verdict = judge(judgeInput(recentTurns(turns), texts), options);
   if (typeof verdict === "string") return failed(verdict);
   if (!verdict.flagged) return undefined;
+  const quote = options.quote ?? JSON.stringify;
   const rows = verdict.findings.map(
-    (f) => `  ${f.where}: ${JSON.stringify(f.post)}\n    carries what the user said: ${JSON.stringify(f.user)}\n`,
+    (f) => `  ${f.where}: ${quote(f.post)}\n    carries what the user said: ${quote(f.user)}\n`,
   );
   if (rows.length === 0) rows.push("  the post, though the model quoted none of it\n");
   return (

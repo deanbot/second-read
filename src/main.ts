@@ -174,15 +174,19 @@ export interface Section {
 }
 
 // `hideTerms` leaves out the text of a private term's finding, for a report an agent reads: the line and column
-// say where to fix it.
-export function report(sections: Section[], fix: string, { hideTerms = false } = {}): string {
+// say where to fix it. `quote` quotes every other finding's text.
+export function report(
+  sections: Section[],
+  fix: string,
+  { hideTerms = false, quote = JSON.stringify as (text: string) => string } = {},
+): string {
   const total = sections.reduce((n, s) => n + s.findings.length, 0);
   const count = total === 1 ? "1 finding" : `${total} findings`;
   const rows = (findings: Finding[]) =>
     findings.map((f) => {
       const position = `${f.line}:${f.column}`;
       const category = f.word ? `${f.category} (${f.word})` : f.category;
-      const text = hideTerms && f.category === "private term" ? "(not shown)" : JSON.stringify(f.text);
+      const text = hideTerms && f.category === "private term" ? "(not shown)" : quote(f.text);
       return `  ${position.padEnd(7)} ${category.padEnd(22)} ${text}\n`;
     });
   if (sections.length === 1) {
@@ -535,12 +539,16 @@ function claudeRefusal(io: Io, call: unknown, userFile: string | Error | undefin
       return { where: post.where, findings: exempt ? checkTerms(post.text, options) : check(post.text, options) };
     })
     .filter((s) => s.findings.length > 0);
-  if (sections.length > 0) return report(sections, FIX_TEXT, { hideTerms: true });
+  // Every post has the same user config, whichever repository it goes to. A value is masked before it's quoted:
+  // quoting escapes a newline or a backslash, which would keep a term in it from being found afterwards.
+  const terms = [...rules.values()][0]?.rules.terms ?? [];
+  const quote = (text: string) => JSON.stringify(maskTerms(text, terms));
+  if (sections.length > 0) return report(sections, FIX_TEXT, { hideTerms: true, quote });
   // A file's contents are code, which the word check covers. Everything else is prose the model reads.
   const prose = posts.filter((p) => p.file === undefined).map(({ where, text }) => ({ where, text }));
   const { on, model } = modelCheck(io.env);
   if (!on || prose.length === 0 || io.env[JUDGING]) return undefined;
-  return judgeRefusal(prose, (call as Record<string, unknown>).transcript_path, { env: io.env, model });
+  return judgeRefusal(prose, (call as Record<string, unknown>).transcript_path, { env: io.env, model, quote });
 }
 
 function runInit(io: Io): number {

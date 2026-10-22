@@ -19,6 +19,8 @@ else if (mode === "private") verdict({ private: true, findings: [{ where: "the b
   post: "before a family visit", user: "before my sister visits" }] });
 else if (mode === "quotes-term") verdict({ private: true, findings: [{ where: "the body of this pull request",
   post: "before the launch", user: "before the example-private-project launch" }] });
+else if (mode === "quotes-term-across-lines") verdict({ private: true, findings: [{
+  where: "the body of this pull request", post: "before the launch", user: "the Example Private\\nProject launch" }] });
 else if (mode === "flagged") verdict({ private: true, findings: [] });
 else if (mode === "unshaped") verdict({ private: "no" });
 else if (mode === "malformed") console.log("not json");

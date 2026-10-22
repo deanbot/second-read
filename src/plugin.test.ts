@@ -365,6 +365,27 @@ test("no reason the hook gives names a private term, wherever the term turns up"
   fake.mode("clean");
 });
 
+test("a term is masked before a value is quoted, so an escaped newline or backslash can't hide it", () => {
+  fake.mode("clean");
+  const comment = (body: string) => ({
+    tool_name: "mcp__github__add_issue_comment",
+    tool_input: { owner: "example", repo: "repo", issue_number: 3, body },
+  });
+  // Quoted, each joins as an escape whose letters and backslashes break the term's words apart.
+  for (const join of ["\\\\", "\u0001", "\ud800"]) {
+    const words = TERM.split("-").join(join);
+    const { denied, reason } = hook(comment(`See ~/notes/${words}/a.md`));
+    assert.ok(denied, JSON.stringify(join));
+    assert.match(reason, /home path\s+"~\/notes\/\[private term\]\/a\.md"/, reason);
+    assert.doesNotMatch(reason, /example/i, reason);
+  }
+  fake.mode("quotes-term-across-lines");
+  const judged = hook(prBody(CLEAN)).reason;
+  assert.match(judged, /carries what the user said: "the \[private term\] launch"/, judged);
+  assert.doesNotMatch(judged, /example/i, judged);
+  fake.mode("clean");
+});
+
 test("a reason the hook can't mask, since the terms can't be read, gives only why", () => {
   const broken = join(scratch, "broken");
   mkdirSync(broken, { recursive: true });
