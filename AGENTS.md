@@ -29,7 +29,7 @@ out. [PLAN.md](./PLAN.md) is the design source of truth. Read the section an iss
 
 - CI (`.github/workflows/ci.yml`) runs `npm ci` and `npm test` on every pull request and every push to `main`, on
   Node 22 and Node 24. A change to Markdown files only skips the tests. `npm run eval:judge` calls a model and
-  stays out of CI.
+  stays out of CI. (Probe: a Markdown-only change, retargeted; this PR is closed unmerged.)
 - The check to require before merge is `tests`. It passes when the tests passed on both Node versions, or when they
   were skipped for a Markdown-only change.
 - To switch CI off, set the repository variable `CI_ENABLED` to `false`, in any case (Settings → Secrets and variables →
