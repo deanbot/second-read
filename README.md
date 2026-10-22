@@ -89,11 +89,11 @@ with its words joined by spaces, hyphens or nothing. It doesn't catch misspellin
 never show your terms. The guards and the plugin can each be given your real one: see
 [the guards' own folder](#a-config-folder-of-the-guards-own) and
 [the plugin's](#a-config-folder-of-the-plugins-own). Agent tools can set variables from settings checked into a
-repository: Claude Code's project `.claude/settings.json` applies to "everyone working in the project, checked into source control", its
-`env` key can be set in any settings file, and only a few named variables are kept from project settings. So a
-repository could point the variable at a config of its own choosing. The same goes for the variables that choose
-the platform's folder: `XDG_CONFIG_HOME`, `APPDATA`, and `HOME` or `USERPROFILE`. Whichever of them chose the
-folder, the check refuses the forms that would let a repository pick it:
+repository: Claude Code's project `.claude/settings.json` applies to "everyone working in the project, checked into
+source control", its `env` key can be set in any settings file, and only a few named variables are kept from
+project settings. So a repository could point the variable at a config of its own choosing. The same goes for the
+variables that choose the platform's folder: `XDG_CONFIG_HOME`, `APPDATA`, and `HOME` or `USERPROFILE`. Whichever
+of them chose the folder, the check refuses the forms that would let a repository pick it:
 
 - **A folder inside any git repository**, its work tree or `.git`, through symlinks too, wherever the check runs
   from. Point the variable at a folder outside every repository, or unset it.
