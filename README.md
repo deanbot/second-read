@@ -240,6 +240,11 @@ Before Claude Code 2.1.295, the hook's `onFailure` setting is ignored, so a hook
 A setup script can tell whether the plugin is in place with `claude plugin list --json`, which lists it as
 `"id": "second-read@second-read"` with `"enabled": true`.
 
+## Contributing
+
+Issues and pull requests are welcome. [CONTRIBUTING.md](./CONTRIBUTING.md) says how to run the tests, how an issue
+or PR is handled, and how to report a security problem privately.
+
 ## License
 
 [MIT](./LICENSE)
