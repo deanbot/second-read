@@ -9,6 +9,7 @@ import {
   KIND_NAMES,
   KINDS,
   type Kind,
+  maskTerms,
   type Rules,
 } from "./checks.ts";
 import {
@@ -18,6 +19,7 @@ import {
   loadRepoConfig,
   loadUserConfig,
   mergeRules,
+  pluginConfigDir,
   USER_FILE,
   USER_FILE_TEMPLATE,
 } from "./config.ts";
@@ -136,10 +138,22 @@ function parseCheckArgs(args: string[]): { kind?: Kind } {
   return kind === undefined ? {} : { kind };
 }
 
-// Your config and the repository's allowlist, from the repository at `cwd`: the one being posted to.
-function loadRules(io: Io, cwd = io.cwd): { identity: Identity; rules: Rules; exemptFiles: string[] } {
+// Your config and the repository's allowlist, from the repository at `cwd`: the one being posted to. The plugin's
+// config_dir option names your config file on purpose, so there a missing one is a mistake, and the check fails
+// rather than go on without your terms.
+function loadRules(
+  io: Io,
+  cwd = io.cwd,
+  userFile?: string,
+): { identity: Identity; rules: Rules; exemptFiles: string[] } {
   const identity = io.identity();
-  const user = loadUserConfig(join(configDir(io.env, io.platform, identity.home), USER_FILE));
+  if (userFile !== undefined && !existsSync(userFile)) {
+    throw new Error(
+      `second-read's config_dir option is ${dirname(userFile)}, which has no ${USER_FILE}. Put one there, or ` +
+        `clear the option in /config or /plugin, so the check can read your private terms`,
+    );
+  }
+  const user = loadUserConfig(userFile ?? defaultUserFile(io));
   const repoPath = findRepoConfig(cwd);
   const repo = repoPath === undefined ? undefined : loadRepoConfig(repoPath, user.terms);
   return { identity, rules: mergeRules(user, repo), exemptFiles: repo?.exemptFiles ?? [] };
@@ -159,14 +173,17 @@ export interface Section {
   findings: Finding[];
 }
 
-export function report(sections: Section[], fix: string): string {
+// `hideTerms` leaves out the text of a private term's finding, for a report an agent reads: the line and column
+// say where to fix it.
+export function report(sections: Section[], fix: string, { hideTerms = false } = {}): string {
   const total = sections.reduce((n, s) => n + s.findings.length, 0);
   const count = total === 1 ? "1 finding" : `${total} findings`;
   const rows = (findings: Finding[]) =>
     findings.map((f) => {
       const position = `${f.line}:${f.column}`;
       const category = f.word ? `${f.category} (${f.word})` : f.category;
-      return `  ${position.padEnd(7)} ${category.padEnd(22)} ${JSON.stringify(f.text)}\n`;
+      const text = hideTerms && f.category === "private term" ? "(not shown)" : JSON.stringify(f.text);
+      return `  ${position.padEnd(7)} ${category.padEnd(22)} ${text}\n`;
     });
   if (sections.length === 1) {
     const [only] = sections as [Section];
@@ -442,21 +459,49 @@ async function runShim(io: Io, args: string[]): Promise<number> {
 // one that can't be checked, is denied, and the reason goes to Claude. A post the word check passes then goes to
 // the model check, unless the user turned it off. Otherwise it prints nothing and the call
 // goes on as it would have: allowing it would skip the user's own permission prompt.
+//
+// The reason goes into the session, so it never holds one of the user's private terms: not in a finding, a file's
+// name, a quoted command or the model check's answer. The config is read only for a call that posts something.
 async function runClaudeHook(io: Io): Promise<number> {
+  const failed = (e: unknown) =>
+    `second-read: the check failed, so this call was stopped: ${e instanceof Error ? e.message : String(e)}\n`;
   let reason: string | undefined;
+  const userFile = claudeUserFile(io);
   try {
-    reason = claudeRefusal(io, JSON.parse((await io.readStdin()).toString("utf8")));
+    reason = claudeRefusal(io, JSON.parse((await io.readStdin()).toString("utf8")), userFile);
   } catch (e) {
-    reason = `second-read: the check failed, so this call was stopped: ${e instanceof Error ? e.message : String(e)}\n`;
+    reason = failed(e);
   }
   if (reason !== undefined) {
+    try {
+      if (userFile instanceof Error) throw userFile;
+      reason = maskTerms(reason, loadUserConfig(userFile ?? defaultUserFile(io)).terms);
+    } catch (e) {
+      // Without the terms the reason can't be masked, so it's replaced by why they couldn't be read.
+      reason = failed(e);
+    }
     const decision = { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason };
     io.out(`${JSON.stringify({ hookSpecificOutput: decision })}\n`);
   }
   return EXIT.clean;
 }
 
-function claudeRefusal(io: Io, call: unknown): string | undefined {
+function defaultUserFile(io: Io): string {
+  return join(configDir(io.env, io.platform, io.identity().home), USER_FILE);
+}
+
+// The config file the plugin's config_dir option names, if it's set. An option that can't be read is kept as the
+// error, so it stops only the calls that post.
+function claudeUserFile(io: Io): string | Error | undefined {
+  try {
+    const dir = pluginConfigDir(io.env, io.identity().home);
+    return dir === undefined ? undefined : join(dir, USER_FILE);
+  } catch (e) {
+    return e instanceof Error ? e : new Error(String(e));
+  }
+}
+
+function claudeRefusal(io: Io, call: unknown, userFile: string | Error | undefined): string | undefined {
   if (call === null || typeof call !== "object") throw new Error("the hook was given no tool call");
   const { tool_name: tool, tool_input: input, cwd: callCwd } = call as Record<string, unknown>;
   const cwd = typeof callCwd === "string" ? callCwd : io.cwd;
@@ -469,6 +514,7 @@ function claudeRefusal(io: Io, call: unknown): string | undefined {
     posts = mcpPosts(tool, input, cwd);
   }
   if (posts.length === 0) return undefined;
+  if (userFile instanceof Error) throw userFile;
   const unread = posts.filter((p) => p.text.includes(UNKNOWN));
   if (unread.length > 0) {
     const rows = unread.map((p) => `  ${p.where}: ${firstUnknown(p.text)}\n`);
@@ -481,7 +527,7 @@ function claudeRefusal(io: Io, call: unknown): string | undefined {
   const rules = new Map<string, ReturnType<typeof loadRules>>();
   const sections = posts
     .map((post) => {
-      if (!rules.has(post.cwd)) rules.set(post.cwd, loadRules(io, post.cwd));
+      if (!rules.has(post.cwd)) rules.set(post.cwd, loadRules(io, post.cwd, userFile));
       const { identity, rules: merged, exemptFiles } = rules.get(post.cwd)!;
       const exempt = post.file !== undefined && exemptMatcher(exemptFiles)(post.file);
       const options = { identity, rules: merged, kind: post.kind };
@@ -489,7 +535,7 @@ function claudeRefusal(io: Io, call: unknown): string | undefined {
       return { where: post.where, findings: exempt ? checkTerms(post.text, options) : check(post.text, options) };
     })
     .filter((s) => s.findings.length > 0);
-  if (sections.length > 0) return report(sections, FIX_TEXT);
+  if (sections.length > 0) return report(sections, FIX_TEXT, { hideTerms: true });
   // A file's contents are code, which the word check covers. Everything else is prose the model reads.
   const prose = posts.filter((p) => p.file === undefined).map(({ where, text }) => ({ where, text }));
   const { on, model } = modelCheck(io.env);

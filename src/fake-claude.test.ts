@@ -17,6 +17,8 @@ const verdict = (v) => console.log(JSON.stringify({ type: "result", is_error: fa
 if (mode === "clean") verdict({ private: false, findings: [] });
 else if (mode === "private") verdict({ private: true, findings: [{ where: "the body of this pull request",
   post: "before a family visit", user: "before my sister visits" }] });
+else if (mode === "quotes-term") verdict({ private: true, findings: [{ where: "the body of this pull request",
+  post: "before the launch", user: "before the example-private-project launch" }] });
 else if (mode === "flagged") verdict({ private: true, findings: [] });
 else if (mode === "unshaped") verdict({ private: "no" });
 else if (mode === "malformed") console.log("not json");

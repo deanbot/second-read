@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { checkTerms } from "./checks.ts";
 import { fakeClaude, transcript } from "./fake-claude.test.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -73,7 +74,9 @@ test("the hook denies a gh post with a private term, and lets the same post with
   const denied = hook(bash(command(LEAKY)));
   assert.ok(denied.denied);
   assert.match(denied.reason, /1 finding in the body of this pull request/);
-  assert.match(denied.reason, new RegExp(`private term\\s+"${TERM}"`));
+  // The reason goes into the session, so it says where the term is without naming it.
+  assert.match(denied.reason, /1:21\s+private term\s+\(not shown\)/);
+  assert.doesNotMatch(denied.reason, new RegExp(TERM));
   assert.deepEqual(hook(bash(command(CLEAN))), { denied: false, reason: "" });
 });
 
@@ -282,4 +285,90 @@ test("the command the plugin's hooks.json names runs the hook from the source", 
   const plugin = JSON.parse(readFileSync(join(root, ".claude-plugin", "plugin.json"), "utf8"));
   assert.equal(plugin.hooks, "./adapters/claude-code/hooks.json");
   assert.match(hook(bash(`gh issue create -t "${LEAKY}" -b "${CLEAN}"`), [handler.command, ...args]).reason, /title/);
+});
+
+// A session that works on second-read reads an empty config folder, so its own output never shows the user's terms.
+// The plugin's config_dir option points its hooks at the real one.
+const empty = join(scratch, "empty");
+const own = join(scratch, "own");
+mkdirSync(empty, { recursive: true });
+mkdirSync(own, { recursive: true });
+writeFileSync(join(own, "config.toml"), `terms = ["${TERM}"]\n`);
+const session = { SECOND_READ_CONFIG_DIR: empty };
+
+test("with config_dir set, the hook reads that folder, while check run by the session reads SECOND_READ_CONFIG_DIR", () => {
+  fake.mode("clean");
+  assert.equal(hook(prBody(LEAKY), undefined, session).denied, false);
+  const withOption = { ...session, CLAUDE_PLUGIN_OPTION_CONFIG_DIR: own };
+  assert.match(hook(prBody(LEAKY), undefined, withOption).reason, /1 finding in the body[^]*private term\s+\(not shown\)/);
+  const checked = spawnSync(process.execPath, [cli, "check"], {
+    cwd: scratch,
+    input: LEAKY,
+    encoding: "utf8",
+    env: { ...env, ...withOption },
+  });
+  assert.equal(checked.status, 0, checked.stdout);
+});
+
+test("config_dir takes ~ for the home folder, and a blank one is unset", () => {
+  fake.mode("clean");
+  mkdirSync(join(home, "own"), { recursive: true });
+  writeFileSync(join(home, "own", "config.toml"), `terms = ["${TERM}"]\n`);
+  assert.equal(hook(prBody(LEAKY), undefined, { ...session, CLAUDE_PLUGIN_OPTION_CONFIG_DIR: "~/own" }).denied, true);
+  assert.equal(hook(prBody(LEAKY), undefined, { ...session, CLAUDE_PLUGIN_OPTION_CONFIG_DIR: " " }).denied, false);
+  assert.equal(hook(prBody(LEAKY), undefined, { CLAUDE_PLUGIN_OPTION_CONFIG_DIR: "" }).denied, true);
+});
+
+test("a config_dir with no config.toml, or that isn't absolute, refuses every post and no other call", () => {
+  fake.mode("clean");
+  const missing = { ...session, CLAUDE_PLUGIN_OPTION_CONFIG_DIR: join(scratch, "nowhere") };
+  assert.match(hook(prBody(CLEAN), undefined, missing).reason, /config_dir option is .*nowhere, which has no config\.toml/);
+  assert.equal(hook(bash(`ls -la`), undefined, missing).denied, false);
+  const relative = { ...session, CLAUDE_PLUGIN_OPTION_CONFIG_DIR: "own" };
+  assert.match(hook(prBody(CLEAN), undefined, relative).reason, /config_dir option is "own", which isn't an absolute path/);
+  assert.equal(hook(bash(`ls -la`), undefined, relative).denied, false);
+});
+
+// Whether a text names the made-up term in any form the check would catch.
+const namesTerm = (text: string) =>
+  checkTerms(text, {
+    identity: { user: "", home: "/nonexistent", host: "", tempDirs: [], emails: [] },
+    rules: { terms: [TERM], allowedWords: [], allowedEmails: [], allowedPaths: [], allowedNames: [], userAllowedEmails: [] },
+  }).length > 0;
+
+test("no reason the hook gives names a private term, wherever the term turns up", () => {
+  fake.mode("clean");
+  mkdirSync(join(repo, TERM), { recursive: true });
+  writeFileSync(join(repo, TERM, "leaky.md"), "Saved to ~/notes/today.md\n");
+  const calls = [
+    bash(`gh pr comment 5 --body "Saved to ~/${TERM}/notes"`),
+    bash(`gh pr comment 5 --body "Write to ops@${TERM}.dev"`),
+    bash(`gh pr comment 5 --body "Moves ExamplePrivateProject and ｅｘａｍｐｌｅ-private-project"`),
+    bash(`gh pr comment 5 --body-file ${TERM}/leaky.md`),
+    bash(`gh pr comment 5 --body-file ${TERM}/missing.md`),
+    bash(`gh pr comment 5 --body "$(./${TERM}/notes)"`),
+    { tool_name: "mcp__github__push_files", tool_input: { files: [{ path: `${TERM}/a.ts`, content: "~/notes\n" }] } },
+  ];
+  for (const call of calls) {
+    const { denied, reason } = hook(call);
+    assert.ok(denied, JSON.stringify(call));
+    assert.ok(!namesTerm(reason), reason);
+    assert.match(reason, /\[private term\]|\(not shown\)/, reason);
+  }
+  fake.mode("quotes-term");
+  const judged = hook(prBody(CLEAN)).reason;
+  assert.match(judged, /the model check found[^]*before the \[private term\] launch/);
+  fake.mode("clean");
+});
+
+test("a reason the hook can't mask, since the terms can't be read, gives only why", () => {
+  const broken = join(scratch, "broken");
+  mkdirSync(broken, { recursive: true });
+  writeFileSync(join(broken, "config.toml"), `terms = ["${TERM}", 1]\n`);
+  const { denied, reason } = hook(bash(`gh pr comment 5 --body "$(./${TERM}/notes)"`), undefined, {
+    CLAUDE_PLUGIN_OPTION_CONFIG_DIR: broken,
+  });
+  assert.ok(denied);
+  assert.match(reason, /the check failed[^]*arrays may hold only strings/);
+  assert.doesNotMatch(reason, new RegExp(TERM));
 });

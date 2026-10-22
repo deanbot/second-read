@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { check, checkTerms, type Identity, type Rules } from "./checks.ts";
+import { check, checkTerms, type Identity, MASKED_TERM, maskTerms, type Rules } from "./checks.ts";
 
 const identity: Identity = {
   user: "example",
@@ -279,6 +279,17 @@ test("checkTerms finds only private terms and the user's own addresses, even ins
     ],
   );
   assert.deepEqual(checkTerms(text, { identity, rules: noRules }), []);
+});
+
+test("maskTerms hides each private term however it's written, and leaves the rest of the text as it is", () => {
+  const terms = ["example-private-project"];
+  assert.equal(
+    maskTerms("in ~/ExamplePrivateProject/x, ｅｘａ​ｍｐｌｅ-private-project and example private project.", terms),
+    `in ~/${MASKED_TERM}/x, ${MASKED_TERM} and ${MASKED_TERM}.`,
+  );
+  const near = "example-private-projects and an example project";
+  assert.equal(maskTerms(near, terms), near);
+  assert.equal(maskTerms("Saved to ~/notes", []), "Saved to ~/notes");
 });
 
 test("findings report line, column and text from the original input", () => {

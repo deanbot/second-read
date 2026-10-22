@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { isBlanketEmail, isBlanketPath, type Rules } from "./checks.ts";
 import { escapeRegExp, fold, termPattern } from "./normalize.ts";
 import { parseToml, type TomlValue } from "./toml.ts";
@@ -31,6 +31,21 @@ export function configDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, hom
   if (env.SECOND_READ_CONFIG_DIR) return env.SECOND_READ_CONFIG_DIR;
   if (platform === "win32") return join(env.APPDATA || join(home, "AppData", "Roaming"), "second-read");
   return join(env.XDG_CONFIG_HOME || join(home, ".config"), "second-read");
+}
+
+// The Claude Code plugin's own config folder, from its config_dir option, which Claude Code gives only to the
+// plugin's hooks. It lets the hooks read the user's terms in a session whose own commands read an empty
+// SECOND_READ_CONFIG_DIR. Unset or blank, the hooks find the config as everything else does.
+export const PLUGIN_CONFIG_DIR = "CLAUDE_PLUGIN_OPTION_CONFIG_DIR";
+
+export function pluginConfigDir(env: NodeJS.ProcessEnv, home: string): string | undefined {
+  const value = env[PLUGIN_CONFIG_DIR]?.trim();
+  if (!value) return undefined;
+  const dir = value.replace(/^~(?=[/\\]|$)/, home);
+  if (!isAbsolute(dir)) {
+    throw new ConfigError(`second-read's config_dir option is ${JSON.stringify(value)}, which isn't an absolute path`);
+  }
+  return dir;
 }
 
 // A missing user file means no private terms yet, not a failure: the other checks still run.
