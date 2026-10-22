@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isBlanketEmail, isBlanketPath, type Rules } from "./checks.ts";
 import { escapeRegExp, fold, termPattern } from "./normalize.ts";
 import { parseToml, type TomlValue } from "./toml.ts";
@@ -26,11 +26,52 @@ export interface RepoConfig extends Allowlists {
 
 const ALLOW_KEYS = { allowed_words: "allowedWords", allowed_emails: "allowedEmails", allowed_paths: "allowedPaths" };
 
-// The platform's config folder. SECOND_READ_CONFIG_DIR overrides it, which is how tests keep away from the real one.
+export const CONFIG_DIR_VARIABLE = "SECOND_READ_CONFIG_DIR";
+
+// The platform's config folder. SECOND_READ_CONFIG_DIR overrides it, which is how tests keep away from the real one,
+// and how an agent session keeps its own output free of the user's terms. Settings files hand variables over as
+// written, with no shell, so a leading ~ is expanded here; a relative path is refused, since it would be read from
+// wherever the check runs, usually inside the repository being checked.
 export function configDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, home: string): string {
-  if (env.SECOND_READ_CONFIG_DIR) return env.SECOND_READ_CONFIG_DIR;
+  const set = env[CONFIG_DIR_VARIABLE];
+  if (set) return absoluteDir(set, home, CONFIG_DIR_VARIABLE);
   if (platform === "win32") return join(env.APPDATA || join(home, "AppData", "Roaming"), "second-read");
   return join(env.XDG_CONFIG_HOME || join(home, ".config"), "second-read");
+}
+
+function absoluteDir(value: string, home: string, name: string): string {
+  const dir = value.replace(/^~(?=[/\\]|$)/, home);
+  if (!isAbsolute(dir)) throw new ConfigError(`${name} is ${JSON.stringify(value)}, which isn't an absolute path`);
+  return dir;
+}
+
+// The top of the repository `dir` is in, when it's in the git repository at or above `cwd`: its work tree, `.git`
+// included. Both are read through symlinks, so a link into the repository counts as inside it. A repository's own
+// settings can set SECOND_READ_CONFIG_DIR, and a folder of its own would hold whatever config it likes, such as one
+// with no terms.
+export function insideRepository(dir: string, cwd: string): string | undefined {
+  const top = repositoryTop(cwd);
+  if (top === undefined) return undefined;
+  const path = relative(realPath(top), realPath(dir));
+  return path === "" || !(path === ".." || path.startsWith(`..${sep}`) || isAbsolute(path)) ? top : undefined;
+}
+
+function repositoryTop(cwd: string): string | undefined {
+  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+    if (existsSync(join(dir, ".git"))) return dir;
+    if (dirname(dir) === dir) return undefined;
+  }
+}
+
+// The path with every symlink in it resolved, as far as it exists: a folder that isn't there yet keeps its name
+// under its nearest parent that is.
+function realPath(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    const parent = dirname(path);
+    return parent === path ? path : join(realPath(parent), basename(path));
+  }
 }
 
 // The Claude Code plugin's own config folder, from its config_dir option, which Claude Code gives only to the
@@ -40,12 +81,7 @@ export const PLUGIN_CONFIG_DIR = "CLAUDE_PLUGIN_OPTION_CONFIG_DIR";
 
 export function pluginConfigDir(env: NodeJS.ProcessEnv, home: string): string | undefined {
   const value = env[PLUGIN_CONFIG_DIR]?.trim();
-  if (!value) return undefined;
-  const dir = value.replace(/^~(?=[/\\]|$)/, home);
-  if (!isAbsolute(dir)) {
-    throw new ConfigError(`second-read's config_dir option is ${JSON.stringify(value)}, which isn't an absolute path`);
-  }
-  return dir;
+  return value ? absoluteDir(value, home, "second-read's config_dir option") : undefined;
 }
 
 // A missing user file means no private terms yet, not a failure: the other checks still run.

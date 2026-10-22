@@ -13,8 +13,10 @@ import {
   type Rules,
 } from "./checks.ts";
 import {
+  CONFIG_DIR_VARIABLE,
   configDir,
   exemptMatcher,
+  insideRepository,
   findRepoConfig,
   loadRepoConfig,
   loadUserConfig,
@@ -153,7 +155,7 @@ function loadRules(
         `clear the option in /config or /plugin, so the check can read your private terms`,
     );
   }
-  const user = loadUserConfig(userFile ?? defaultUserFile(io));
+  const user = loadUserConfig(userFile ?? defaultUserFile(io, cwd));
   const repoPath = findRepoConfig(cwd);
   const repo = repoPath === undefined ? undefined : loadRepoConfig(repoPath, user.terms);
   return { identity, rules: mergeRules(user, repo), exemptFiles: repo?.exemptFiles ?? [] };
@@ -395,8 +397,7 @@ function runShimSetup(io: Io, args: string[]): number {
     throw new UsageError(`shim takes "install" or "uninstall", and optionally a folder`);
   }
   if (io.platform === "win32") throw new Error("the gh shim is a shell script, and Windows isn't supported yet");
-  const dir =
-    folder === undefined ? join(configDir(io.env, io.platform, io.identity().home), "bin") : resolve(io.cwd, folder);
+  const dir = folder === undefined ? join(ownConfigDir(io), "bin") : resolve(io.cwd, folder);
   const path = join(dir, "gh");
   const theirs = existsSync(path) && !isShim(path);
   if (action === "uninstall") {
@@ -490,8 +491,39 @@ async function runClaudeHook(io: Io): Promise<number> {
   return EXIT.clean;
 }
 
-function defaultUserFile(io: Io): string {
-  return join(configDir(io.env, io.platform, io.identity().home), USER_FILE);
+// Your config file, unless the plugin's config_dir option names one.
+function defaultUserFile(io: Io, cwd = io.cwd): string {
+  const dir = ownConfigDir(io, cwd);
+  const path = join(dir, USER_FILE);
+  // A missing file is the same as no terms, so a folder that has none, such as / or /var/empty, would switch
+  // the term check off wherever the variable is set, a repository's own settings included. A folder that's meant
+  // to be empty holds a config.toml with no terms in it.
+  if (io.env[CONFIG_DIR_VARIABLE] && !existsSync(path)) {
+    throw new Error(
+      `${CONFIG_DIR_VARIABLE} is ${dir}, which has no ${USER_FILE}, so the check can't tell whether you have ` +
+        `private terms. If it's meant to have none, write one with no terms: ` +
+        `${CONFIG_DIR_VARIABLE}=${shellQuote(dir)} second-read init`,
+    );
+  }
+  return path;
+}
+
+// Your config folder. One that SECOND_READ_CONFIG_DIR names inside the repository at `cwd` is refused, since that
+// repository's own settings could have named it, and a config there says whatever the repository wants.
+function ownConfigDir(io: Io, cwd = io.cwd): string {
+  const dir = configDir(io.env, io.platform, io.identity().home);
+  const top = io.env[CONFIG_DIR_VARIABLE] ? insideRepository(dir, cwd) : undefined;
+  if (top !== undefined) {
+    throw new Error(
+      `${CONFIG_DIR_VARIABLE} is ${dir}, inside the repository at ${top}. A repository's own settings can set ` +
+        `it, so it can't name a folder there; set it to one outside the repository, or unset it`,
+    );
+  }
+  return dir;
+}
+
+function shellQuote(text: string): string {
+  return /^[\w@%+=:,./~-]+$/.test(text) ? text : `'${text.replaceAll("'", `'\\''`)}'`;
 }
 
 // The config file the plugin's config_dir option names, if it's set. An option that can't be read is kept as the
@@ -552,7 +584,7 @@ function claudeRefusal(io: Io, call: unknown, userFile: string | Error | undefin
 }
 
 function runInit(io: Io): number {
-  const dir = configDir(io.env, io.platform, io.identity().home);
+  const dir = ownConfigDir(io);
   const path = join(dir, USER_FILE);
   if (existsSync(path)) {
     io.out(`second-read: ${path} already exists; it was left as it is.\n`);

@@ -83,6 +83,32 @@ allowed_names = ["juniper"]               # your account or machine name, when i
 A term matches in any case, with or without accents, in fullwidth forms, with invisible characters inside it, and
 with its words joined by spaces, hyphens or nothing. It doesn't catch misspellings.
 
+### `SECOND_READ_CONFIG_DIR`
+
+`SECOND_READ_CONFIG_DIR` names another config folder, for tests, or for an agent session whose own output should
+never show your terms. Agent tools can set variables from settings checked into a repository: Claude Code's
+project `.claude/settings.json` applies to "everyone working in the project, checked into source control", its
+`env` key can be set in any settings file, and only a few named variables are kept from project settings. So a
+repository could point the variable at a config of its own choosing, and the check refuses the forms that would
+let it:
+
+- **A folder inside the repository being checked**, its work tree or `.git`, through symlinks too. Set it to a
+  folder outside the repository, or unset it.
+- **A relative path**, which would be read from wherever the check runs. A leading `~` is your home folder, since
+  settings files hand the value over with no shell to expand it.
+- **A folder with no `config.toml`.** A missing file would mean no terms, so a folder every machine has, such as
+  `/`, `/var/empty` or the system's temp folder, would switch the term check off. A folder that's meant to have no
+  terms holds a file without any, which `init` writes:
+
+  ```sh
+  SECOND_READ_CONFIG_DIR=/path/to/folder second-read init
+  ```
+
+Each makes the check fail, so the guards refuse until it's fixed. The platform's own config folder is never
+refused: a missing file there still means no terms yet.
+
+**Upgrading:** if you point `SECOND_READ_CONFIG_DIR` at an empty folder, run that `init` once, or every check fails.
+
 The machine name isn't flagged when it's one a system gives by default, such as `MacBook-Pro`, `raspberrypi` or
 `penguin`, or a word for the kind of computer, such as `laptop`. Any other name is, even an ordinary word, since a
 name someone chose can say who they are. If yours is a word that's fine to post, put it in `allowed_names`, and
@@ -222,8 +248,8 @@ The reason is all that's masked: the post itself is checked as it is, and never 
 ### A config folder of the plugin's own
 
 A session that works on a repository where `second-read check` runs all day, such as second-read's own, can set
-`SECOND_READ_CONFIG_DIR` to an empty folder, so its commands' output never shows your terms. The plugin's hooks
-run in that session and would read the empty folder too. Point them at your real config with the **Config folder**
+`SECOND_READ_CONFIG_DIR` to a folder with no terms, so its commands' output never shows yours. The plugin's hooks
+run in that session and would read that folder too. Point them at your real config with the **Config folder**
 option, `config_dir`, in `/config` or in `/plugin` under second-read:
 
 ```json
@@ -243,7 +269,7 @@ don't post aren't affected.
 
 The git hooks and the gh shim don't read the option: they run outside Claude Code, which gives it only to the
 plugin. The plugin checks every commit and tag message and gh post a session makes, but what a push adds is the
-`pre-push` hook's to check, and in such a session it reads the empty folder.
+`pre-push` hook's to check, and in such a session it reads the folder with no terms.
 
 The plugin never approves a call. A clean post goes on to Claude Code's usual permission check. Its deny holds in
 `bypassPermissions` mode too: a session run with `--permission-mode bypassPermissions` on Claude Code 2.1.302 had

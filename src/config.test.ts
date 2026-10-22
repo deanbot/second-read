@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -8,6 +8,7 @@ import {
   configDir,
   exemptMatcher,
   findRepoConfig,
+  insideRepository,
   loadRepoConfig,
   loadUserConfig,
   mergeRules,
@@ -30,6 +31,34 @@ test("the config folder follows the platform's convention, and the override wins
   assert.equal(configDir({ XDG_CONFIG_HOME: "/x/config" }, "linux", "/home/example"), "/x/config/second-read");
   assert.equal(configDir({ APPDATA: "/x/Roaming" }, "win32", "/x"), join("/x/Roaming", "second-read"));
   assert.equal(configDir({ SECOND_READ_CONFIG_DIR: "/x/sr", XDG_CONFIG_HOME: "/y" }, "linux", "/h"), "/x/sr");
+});
+
+test("SECOND_READ_CONFIG_DIR takes ~ for the home folder, as settings files hand it over unexpanded, and no relative path", () => {
+  assert.equal(configDir({ SECOND_READ_CONFIG_DIR: "~/sr" }, "linux", "/home/example"), "/home/example/sr");
+  assert.equal(configDir({ SECOND_READ_CONFIG_DIR: "~" }, "linux", "/home/example"), "/home/example");
+  for (const value of ["sr", "./sr", "../sr", "~sr", " /x/sr"]) {
+    assert.throws(() => configDir({ SECOND_READ_CONFIG_DIR: value }, "linux", "/h"), /isn't an absolute path/, value);
+  }
+});
+
+test("insideRepository finds a folder in the repository's work tree or .git, from any folder in it, through links", () => {
+  const repo = join(scratch, "inside", "repo");
+  mkdirSync(join(repo, ".git"), { recursive: true });
+  mkdirSync(join(repo, "src", "deep"), { recursive: true });
+  mkdirSync(join(scratch, "inside", "outside"), { recursive: true });
+  symlinkSync(join(repo, "src"), join(scratch, "inside", "link-in"));
+  symlinkSync(join(scratch, "inside", "outside"), join(repo, "link-out"));
+  const top = (dir: string, cwd = join(repo, "src", "deep")) => insideRepository(dir, cwd);
+  const inside = [repo, join(repo, "cfg"), join(repo, "..cfg"), join(repo, ".git", "cfg"), join(repo, "src", "deep")];
+  for (const dir of [...inside, join(scratch, "inside", "link-in", "x")]) {
+    assert.equal(top(dir), repo, dir);
+  }
+  // A folder named like the repository, or one a link in the repository points out to, isn't in it.
+  for (const dir of [join(scratch, "inside", "repo-other"), join(scratch, "inside", "outside"), join(repo, "link-out")]) {
+    assert.equal(top(dir), undefined, dir);
+  }
+  // Outside any repository there's nothing to be inside.
+  assert.equal(insideRepository(join(scratch, "inside", "outside", "cfg"), join(scratch, "inside", "outside")), undefined);
 });
 
 test("the plugin's config_dir option is an absolute folder, ~ for the home folder, or unset when blank", () => {

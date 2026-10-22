@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -11,18 +11,21 @@ after(() => rmSync(scratch, { recursive: true, force: true }));
 
 let runs = 0;
 
-// Every run gets its own config folder and working folder inside the scratch folder.
-async function run(argv: string[], stdin = "", setup?: (config: string, cwd: string) => void) {
+// Every run gets its own config folder and working folder inside the scratch folder. The config folder holds a file
+// with no terms, as SECOND_READ_CONFIG_DIR needs, unless the run is init, which writes it.
+// A setup can return variables to set on top, such as another SECOND_READ_CONFIG_DIR.
+async function run(argv: string[], stdin = "", setup?: (config: string, cwd: string) => NodeJS.ProcessEnv | void) {
   const root = join(scratch, `run-${++runs}`);
   const config = join(root, "config");
   const cwd = join(root, "repo");
   mkdirSync(join(cwd, ".git"), { recursive: true });
-  setup?.(config, cwd);
+  if (argv[0] !== "init") userFile("terms = []\n")(config);
+  const env = setup?.(config, cwd) ?? {};
   let out = "";
   let err = "";
   const io: Io = {
     argv,
-    env: { SECOND_READ_CONFIG_DIR: config },
+    env: { SECOND_READ_CONFIG_DIR: config, ...env },
     platform: "linux",
     cwd,
     identity: () => ({ user: "example", home: "/home/example", host: "example-box", tempDirs: [], emails: [] }),
@@ -128,9 +131,11 @@ test("a failure reading stdin exits 2", async () => {
 });
 
 test("the gh shim reads no stdin from a terminal for a gist with no files, as gh doesn't", async () => {
+  const config = join(scratch, "no-terms");
+  userFile("terms = []\n")(config);
   const io = (stdinIsTTY: boolean): Io => ({
     argv: ["gh-shim", join(scratch, "shim", "gh"), "gist", "create", "--desc", "Clean"],
-    env: { SECOND_READ_CONFIG_DIR: join(scratch, "no-config"), PATH: "" },
+    env: { SECOND_READ_CONFIG_DIR: config, PATH: "" },
     platform: "linux",
     cwd: scratch,
     identity: () => ({ user: "example", home: "/home/example", host: "example-box", tempDirs: [], emails: [] }),
@@ -169,4 +174,79 @@ test("help exits 0", async () => {
   const { code, out } = await run(["--help"]);
   assert.equal(code, 0);
   assert.match(out, /second-read check/);
+});
+
+// A repository's own settings can set SECOND_READ_CONFIG_DIR, as Claude Code's checked-in project settings can,
+// and point it at a config of the repository's choosing.
+// Clean text, so a run exits 0 when its config is accepted and 2 when it's refused.
+const TEXT = "Add the hook (#2)\n";
+
+function configAt(folder: (cwd: string) => string) {
+  return (_config: string, cwd: string) => {
+    const dir = folder(cwd);
+    userFile("terms = []\n")(dir);
+    return { SECOND_READ_CONFIG_DIR: dir };
+  };
+}
+
+test("a SECOND_READ_CONFIG_DIR inside the repository being checked is refused, through a symlink too", async () => {
+  const inside = [
+    (cwd: string) => join(cwd, "config"),
+    (cwd: string) => join(cwd, ".git", "config-folder"),
+    (cwd: string) => join(cwd, "a", "b", "config"),
+    (cwd: string) => {
+      userFile("terms = []\n")(join(cwd, "config"));
+      symlinkSync(join(cwd, "config"), join(cwd, "..", "link"));
+      return join(cwd, "..", "link");
+    },
+  ];
+  for (const folder of inside) {
+    const { code, err } = await run(["check"], TEXT, configAt(folder));
+    assert.equal(code, 2, err);
+    assert.match(err, /SECOND_READ_CONFIG_DIR is .*, inside the repository at .*repo\. A repository's own settings/);
+  }
+  const outside = await run(["check"], TEXT, configAt((cwd) => join(cwd, "..", "elsewhere")));
+  assert.equal(outside.code, 0, outside.err);
+});
+
+test("on a file system that ignores case, the repository named in another case is the same folder", async () => {
+  let ignoresCase = false;
+  const { code, err } = await run(["check"], TEXT, (_config, cwd) => {
+    userFile("terms = []\n")(join(cwd, "config"));
+    ignoresCase = existsSync(join(cwd, "..", "REPO"));
+    return { SECOND_READ_CONFIG_DIR: join(cwd, "..", "REPO", "config") };
+  });
+  assert.equal(code, 2, err);
+  // Where case counts, the folder isn't there at all, and has no config.toml.
+  assert.match(err, ignoresCase ? /inside the repository/ : /which has no config\.toml/);
+});
+
+test("a relative SECOND_READ_CONFIG_DIR is refused, since it's read from wherever the check runs", async () => {
+  for (const value of ["config", "./config", "../config", "~config"]) {
+    const { code, err } = await run(["check"], TEXT, () => ({ SECOND_READ_CONFIG_DIR: value }));
+    assert.equal(code, 2, value);
+    assert.match(err, new RegExp(`SECOND_READ_CONFIG_DIR is "${value.replaceAll(".", "\\.")}", which isn't an absolute path`));
+  }
+});
+
+test("a SECOND_READ_CONFIG_DIR with no config.toml is refused, with the init line that fixes it", async () => {
+  for (const folder of ["/", join(scratch, "nowhere"), tmpdir()]) {
+    const { code, err } = await run(["check"], TEXT, () => ({ SECOND_READ_CONFIG_DIR: folder }));
+    assert.equal(code, 2, folder);
+    assert.match(err, /which has no config\.toml[^]*SECOND_READ_CONFIG_DIR=\S+ second-read init\n$/);
+  }
+  // Written by init, a folder with no terms in it is fine.
+  const root = join(scratch, "meant-empty");
+  const init = await run(["init"], "", () => ({ SECOND_READ_CONFIG_DIR: root }));
+  assert.equal(init.code, 0, init.err);
+  assert.equal((await run(["check"], TEXT, () => ({ SECOND_READ_CONFIG_DIR: root }))).code, 0);
+});
+
+test("init and shim install refuse a SECOND_READ_CONFIG_DIR inside the repository", async () => {
+  const init = await run(["init"], "", (_config, cwd) => ({ SECOND_READ_CONFIG_DIR: join(cwd, "config") }));
+  assert.equal(init.code, 2);
+  assert.match(init.err, /inside the repository/);
+  const shim = await run(["shim", "install"], "", configAt((cwd) => join(cwd, "config")));
+  assert.equal(shim.code, 2);
+  assert.match(shim.err, /inside the repository/);
 });

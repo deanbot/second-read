@@ -51,7 +51,11 @@ So the check has to run **before** a post goes out, and it can't rely on the per
 - **Configuration:**
   - the user's file in the platform's config folder (`~/.config/second-read/` where there is no other convention),
     or in the folder `SECOND_READ_CONFIG_DIR` names: private terms, allowed emails, allowed paths, allowed account
-    and machine names;
+    and machine names. A repository's own settings can set that variable (Claude Code's checked-in project
+    settings can set any but a few named variables), so the folder it names must be absolute, outside the
+    repository being checked, and hold a `config.toml`: a missing one there would mean no terms, and a folder
+    every machine has, such as `/var/empty`, would switch the term check off. A folder meant to have no terms
+    holds a file without any, which `init` writes;
   - a repository's `.second-read.toml`: an allowlist only, never private terms. Anyone with write access can change
     it, so an entry that switches a whole check off is an error, and `pre-push` refuses a change to it until the
     new version's blob id, or the id of the commit that deletes it, is given. Its `exempt_files` globs name files
@@ -108,8 +112,8 @@ What the guards can't see: an agent that posts through its own GitHub tool, or t
     turn, since its format isn't documented. A quick crash is tried once more, since it's more likely the API than
     the post.
   - **Options:** `model_check` turns it off, and `model` picks the model, `haiku` by default. `config_dir` points
-    the hooks at a config folder of their own, for a session whose commands read an empty `SECOND_READ_CONFIG_DIR`
-    so their output never shows the user's terms. Claude Code gives plugin options only to the plugin's hooks, and
+    the hooks at a config folder of their own, for a session whose commands read a `SECOND_READ_CONFIG_DIR` with
+    no terms, so their output never shows the user's. Claude Code gives plugin options only to the plugin's hooks, and
     reads them only from user, `--settings` and managed settings, so neither the session's commands nor a
     repository can see or set it. A folder without a `config.toml`, or a path that isn't absolute, refuses every
     post.
